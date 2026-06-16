@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+  // 👆 Generate TypeScript client for our code
+}
+
+datasource db {
+  provider = "postgresql"
+  // 👆 Using PostgreSQL (Neon DB)
+  url = env("DATABASE_URL")
+  // 👆 Reads from .env.local file
+}
+
+model User {
+  // 👆 User table — stores all registered users
+  id        String   @id @default(cuid())
+  // 👆 Unique ID — auto generated like "clh1234abcd"
+
+  name      String
+  // 👆 User's full name
+
+  email     String   @unique
+  // 👆 Email must be unique — no duplicate accounts!
+
+  password  String
+  // 👆 Stores HASHED password — never plain text!
+
+  tasks     Task[]
+  // 👆 Relation — one user HAS MANY tasks
+  // This is not a column — just a Prisma relation helper
+
+  createdAt DateTime @default(now())
+  // 👆 Auto set when user registers
+
+  updatedAt DateTime @updatedAt
+  // 👆 Auto updates when user data changes
+}
+
+model Task {
+  // 👆 Task table — stores all tasks
+  id          String   @id @default(cuid())
+  // 👆 Unique task ID
+
+  title       String
+  // 👆 Task title — required
+
+  description String?
+  // 👆 ? means OPTIONAL — task can have no description
+  // In SQL this is NULL allowed
+
+  status      String   @default("Todo")
+  // 👆 Task status — Todo, InProgress, Done
+  // Defaults to "Todo" when task is created
+
+  priority    String   @default("Medium")
+  // 👆 Task priority — Low, Medium, High
+  // Defaults to "Medium"
+
+  userId      String
+  // 👆 Foreign key — connects task to its owner
+  // Stores the User's id
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // 👆 Relation definition:
+  // fields: [userId] — this table's foreign key
+  // references: [id] — User table's primary key
+  // onDelete: Cascade — if user deleted, their tasks deleted too!
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
