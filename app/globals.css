@@ -24,3 +24,24 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* 👆 Defines the animation — starts off-screen right, slides to position */
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* 👆 Custom Tailwind-style class — applies our keyframe animation
+   0.3s = duration, ease-out = starts fast, slows down at the end */
