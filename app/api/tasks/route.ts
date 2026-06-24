@@ -60,10 +60,20 @@ export async function GET(request: Request) {
             },
             skip: skip,
             // 👆 Tells the database to SKIP this many rows before starting
-            take: limit
+            take: limit,
             // 👆 Tells the database to TAKE only this many rows after skipping
             // Together, skip+take = the database does the heavy lifting,
             // NOT our JavaScript code — much more efficient at scale!
+            include: {
+                tags: {
+                    // 👆 include — tells Prisma "also fetch the related TaskTag records"
+                    include: {
+                        tag: true
+                        // 👆 NESTED include — for each TaskTag, ALSO fetch the actual Tag details
+                        // Without this, you'd only get { taskId, tagId } — not the tag's name/color!
+                    }
+                }
+            }
         });
 
         const totalPages = Math.ceil(totalTasks / limit);

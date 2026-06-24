@@ -67,4 +67,53 @@ model Task {
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  tags        TaskTag[]
+  // ⭐ NEW — this Task can have MULTIPLE TaskTag join records
+  // Just like `tasks Task[]` on User — this is a Prisma relation helper,
+  // NOT an actual database column
+
+  @@index([userId])
+}
+
+model Tag {
+  // ⭐ NEW MODEL — represents a reusable label like "Urgent" or "Work"
+  id    String    @id @default(cuid())
+  name  String    @unique
+  // 👆 @unique — prevents creating two tags both named "Urgent" by accident
+  color String    @default("#3B82F6")
+  // 👆 Hex color code — lets each tag have a distinct visual color in the UI
+  tasks TaskTag[]
+  // 👆 This Tag can be linked to MULTIPLE TaskTag join records (used on many tasks)
+}
+
+model TaskTag {
+  // ⭐ THE JOIN TABLE — connects Task and Tag together
+  // Its only purpose: record "this specific task uses this specific tag"
+
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  // 👆 onDelete: Cascade — if a Task is deleted, remove its tag-links too
+  // (the Tag itself stays — just this connection disappears)
+
+  tagId  String
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  // 👆 Same idea — if a Tag is deleted, remove its task-links too
+
+  @@id([taskId, tagId])
+  // 👆 COMPOSITE PRIMARY KEY — instead of a separate `id` field,
+  // the COMBINATION of taskId + tagId together forms the unique identifier
+  // This also PREVENTS duplicate entries — you can't link the same
+  // task to the same tag twice, since that combo must be unique!
+}
+
+model ActivityLog {
+  // 👆 New table — tracks significant actions for audit purposes
+  id        String   @id @default(cuid())
+  action    String
+  // 👆 e.g., "BULK_PRIORITY_UPDATE"
+  details   String
+  // 👆 e.g., "Updated 5 tasks to High priority"
+  userId    String
+  createdAt DateTime @default(now())
 }
