@@ -10,6 +10,11 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-display);
+  /* 👆 NEW — registers --font-display as an actual Tailwind utility
+     This is what makes className="font-display" work in your JSX!
+     Without this line, Tailwind has no idea "font-display" exists
+     as a valid class — it would just silently do nothing. */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -45,3 +50,27 @@ body {
 
 /* 👆 Custom Tailwind-style class — applies our keyframe animation
    0.3s = duration, ease-out = starts fast, slows down at the end */
+
+html {
+  overflow-y: scroll;
+  /* 👆 FORCES the vertical scrollbar to ALWAYS be reserved/visible,
+     whether or not the content is currently tall enough to need it.
+     
+     This means the page's WIDTH stays constant at all times —
+     no more "jumping" because the scrollbar is appearing/disappearing */
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 👆 Used by the inline Add Task form — fades + slides down when opened
+   Different from slideIn (Toast) which slides in from the side */

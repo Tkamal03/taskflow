@@ -1,7 +1,20 @@
 import type { Metadata } from "next";
+import { Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { SessionProvider } from "next-auth/react";
-// 👆 SessionProvider — makes session available everywhere in app
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-body"
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--font-display"
+  // 👆 This variable name MUST exactly match what we just wrote
+  // in globals.css — "--font-display" in both places
+});
 
 export const metadata: Metadata = {
   title: "TaskFlow",
@@ -14,12 +27,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${inter.variable} ${spaceGrotesk.variable}`}>
       <body>
         <SessionProvider>
-          {/* 👆 Wraps entire app — session accessible everywhere */}
           {children}
-          {/* 👆 children — renders the current page */}
         </SessionProvider>
       </body>
     </html>
