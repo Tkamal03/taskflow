@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 // 👆 Our single Prisma instance
-
+import { Prisma as PrismaTypes } from "@prisma/client";
+// 👆 RENAMED — using "as" to avoid confusion with our lowercase 
 import { auth } from "@/auth";
 // 👆 auth() — gets current session in Server-side code (API routes are server-side!)
 
@@ -42,18 +43,53 @@ export async function GET(request: Request) {
         // Page 2 → skip (2-1)*5 = 5   → tasks 6-10
         // Page 3 → skip (3-1)*5 = 10  → tasks 11-15
 
+
+        // Searech from DB start here....
+
+        const search = searchParams.get("search") || "";
+        // 👆 NEW — read the search term from the URL query params
+        // Defaults to empty string if no search term provided
+
+
+        const statusFilter = searchParams.get("status") || "All";
+        // 👆 NEW — also move status filtering to the backend, same logic!
+        // (Day 6's status filter buttons had the SAME problem as search,
+        //  just less obvious — let's fix both together)
+
+        // ⭐ Build the WHERE clause dynamically based on what's provided
+        const whereClause: PrismaTypes.TaskWhereInput = {
+            // 👆 Using our renamed "PrismaTypes" instead of "Prisma"
+            // 👆 CHANGED from "any" to "Prisma.TaskWhereInput"
+            // This is a type PRISMA ITSELF GENERATES based on your schema —
+            // it knows EXACTLY what fields/filters are valid for the Task model
+            userId: session.user.id
+            // 👆 Security check stays exactly the same — always scoped to user
+        };
+
+        if (search) {
+            whereClause.title = {
+                contains: search,
+                // 👆 Prisma's "contains" — translates to SQL's LIKE '%search%'
+                mode: "insensitive"
+                // 👆 "insensitive" — makes the search case-insensitive at the DATABASE level
+                // (remember our .toLowerCase() trick from Day 6? Prisma has a built-in way!)
+            };
+        }
+
+        if (statusFilter !== "All") {
+            whereClause.status = statusFilter;
+            // 👆 Only add this filter if a SPECIFIC status was requested
+        }
+
         const totalTasks = await prisma.task.count({
-            where: { userId: session.user.id }
-            // 👆 count() — just counts matching rows, doesn't fetch the actual data
-            // We need this to calculate how MANY pages exist in total
+            where: whereClause
+            // 👆 Now count() respects search+filter too, not just userId!
+            // This is THE key fix — totalPages will now be calculated 
+            // based on MATCHING tasks, not ALL tasks
         });
 
         const tasks = await prisma.task.findMany({
-            where: {
-                userId: session.user.id
-                // ⭐ CRITICAL — only fetch tasks belonging to THIS user
-                // Without this line — security bug! Users see everyone's tasks!
-            },
+            where: whereClause,
             orderBy: {
                 createdAt: "desc"
                 // 👆 desc — newest tasks first

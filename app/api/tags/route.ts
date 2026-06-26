@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { auth } from "@/auth";
+import { ApiResponse } from "@/lib/types";
+
+
+interface Tag {
+    id: string;
+    name: string;
+    color: string;
+}
 
 // GET — fetch all available tags
 export async function GET() {
@@ -8,10 +16,19 @@ export async function GET() {
         const session = await auth();
 
         if (!session?.user?.id) {
-            return NextResponse.json(
-                { success: false, message: "Not authenticated" },
-                { status: 401 }
-            );
+
+            const response: ApiResponse<never> = {
+                // 👆 ApiResponse<never> — "never" here means 
+                //    "this specific response will NEVER actually contain data"
+                //    since this is the error branch — fits cleanly with our union type
+                success: false,
+                message: "Not authenticated"
+            };
+            return NextResponse.json(response, { status: 401 });
+            // return NextResponse.json(
+            //     { success: false, message: "Not authenticated" },
+            //     { status: 401 }
+            // );
         }
 
         const tags = await prisma.tag.findMany({
@@ -22,7 +39,18 @@ export async function GET() {
         // (A more advanced design might scope tags per-user too, but
         //  for learning purposes, global tags keep this lesson focused)
 
-        return NextResponse.json({ success: true, data: tags });
+        const response: ApiResponse<Tag[]> = {
+            // 👆 ApiResponse<Tag[]> — NOW we specify T = Tag[]
+            //    TypeScript will ENFORCE that `data` must be an array of Tag objects
+            //    If we accidentally returned the wrong shape, TypeScript catches it!
+            success: true,
+            data: tags
+        };
+
+        return NextResponse.json(response);
+
+        // return NextResponse.json({ success: true, data: tags });
+
 
     } catch (error) {
         console.error("GET /api/tags error:", error);

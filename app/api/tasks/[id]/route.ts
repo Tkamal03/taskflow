@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { auth } from "@/auth";
+import { TaskUpdateInput } from "@/lib/types";
 
 // GET — fetch one specific task
 export async function GET(
@@ -69,7 +70,13 @@ export async function PUT(
         }
 
         const { id } = await params;
-        const body = await request.json();
+        // const body = await request.json();
+
+        const body: TaskUpdateInput = await request.json();
+        // 👆 THIS is where TaskUpdateInput actually gets used
+        // body.title, body.status, body.priority — ALL optional now
+        // TypeScript allows you to send JUST { status: "Done" } 
+        // without complaining that title/description are "missing"
 
         // First check task exists AND belongs to user
         const existingTask = await prisma.task.findUnique({ where: { id } });

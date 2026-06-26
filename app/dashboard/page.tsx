@@ -6,16 +6,17 @@ import { useSession, signOut } from "next-auth/react";
 // 👆 Client-side way to get session (Server way was auth() — different file, different rule!)
 import { useRouter } from "next/navigation";
 import TaskSkeleton from "@/app/components/TaskSkeleton";
+import { TasksApiResponse, Task } from "@/lib/types";
 
-interface Task {
-    // 👆 TypeScript interface — defines the shape of a Task object
-    id: string;
-    title: string;
-    description: string | null;
-    status: string;
-    priority: string;
-    createdAt: string;
-}
+// interface Task {
+//     // 👆 TypeScript interface — defines the shape of a Task object
+//     id: string;
+//     title: string;
+//     description: string | null;
+//     status: string;
+//     priority: string;
+//     createdAt: string;
+// }
 
 export default function DashboardPage() {
     const router = useRouter();
@@ -41,24 +42,71 @@ export default function DashboardPage() {
     const [totalTasks, setTotalTasks] = useState(0);
     //For pagination state 
 
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    // 👆 NEW — this is the value that ACTUALLY triggers the API call
+    // It only updates AFTER the user pauses typing
+
     async function fetchTasks(page: number = 1) {
-        const response = await fetch(`/api/tasks?page=${page}&limit=5`);
+        const params = new URLSearchParams({
+            page: page.toString(),
+            limit: "5",
+            search: debouncedSearch,
+            // 👆 NEW — send the current search box value to the backend
+            status: filter
+            // 👆 NEW — send the current filter selection to the backend
+        });
+        // 👆 URLSearchParams — a clean built-in way to build query strings
+        // Handles encoding special characters safely (spaces, symbols, etc.)
+        // Result: "page=1&limit=5&search=milk&status=Todo"
+
+        const response = await fetch(`/api/tasks?${params.toString()}`);
         // 👆 Calls our GET handler — automatically scoped to logged-in user
         // 👆 Building the URL with query parameters
         // Template literal makes this readable: /api/tasks?page=2&limit=5
-        const data = await response.json();
-        if (data.success) {
-            setTasks(data.data);
-            setCurrentPage(data.pagination.currentPage);
-            setTotalPages(data.pagination.totalPages);
-            setTotalTasks(data.pagination.totalTasks);
+
+        // const data = await response.json();
+
+        const result: TasksApiResponse = await response.json();
+        // 👆 Note: our actual API returns data AND pagination together,
+        // so the generic <T> here represents that combined shape
+
+        if (result.success) {
+            setTasks(result.data);
+            setCurrentPage(result.pagination.currentPage);
+            setTotalPages(result.pagination.totalPages);
+            setTotalTasks(result.pagination.totalTasks);
+        } else {
+            // 👆 TypeScript NARROWS the other way — result.message exists here
+            setToast({ message: result.message, type: "error" });
+            // 👆 Now even our ERROR HANDLING is type-safe!
         }
         setLoading(false);
     }
 
     useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSearch(searchQuery);
+            // 👆 After 1000ms of NO changes to searchQuery,finally "commit" the value to debouncedSearch
+        }, 1000);
+        // 👆 1000ms = half a second pause required before acting
+
+        return () => clearTimeout(timer);
+        // 👆 CRITICAL — this is the SAME cleanup pattern from our Toast component!
+        // Every time searchQuery changes (new keystroke), this EFFECT re-runs,
+        // and BEFORE it sets a new timer, it CANCELS the previous one
+        // This is literally what creates the "reset the timer" behavior
+    }, [searchQuery]);
+    // 👆 Runs every time searchQuery changes (every keystroke)
+
+    useEffect(() => {
         fetchTasks(1);
-    }, []);
+        // 👆 Whenever searchQuery OR filter changes, 
+        // go back to PAGE 1 and re-fetch with the new search/filter applied
+        // (makes sense — if you start a new search, you want fresh page 1 results,
+        //  not to stay on whatever page you happened to be on before)
+    }, [debouncedSearch, filter]);
+    // 👆 DEPENDENCY ARRAY CHANGED — now re-runs whenever searchQuery 
+    //    OR filter changes, not just once on initial page load
     // 👆 Empty array = run once when page loads
 
     async function handleAddTask() {
@@ -124,16 +172,16 @@ export default function DashboardPage() {
         router.push("/login");
     }
 
-    const filteredTasks = tasks
-        .filter(task => filter === "All" || task.status === filter)
-        // 👆 Step 1 — apply status filter (All/Todo/InProgress/Done) — same as before
+    // const filteredTasks = tasks
+    //     .filter(task => filter === "All" || task.status === filter)
+    //     // 👆 Step 1 — apply status filter (All/Todo/InProgress/Done) — same as before
 
-        .filter(task =>
-            task.title.toLowerCase().includes(searchQuery.toLowerCase())
-            // 👆 Step 2 — apply search filter on TOP of the status filter
-            // .toLowerCase() on both sides — makes search case-insensitive
-            // "Buy Milk" matches search "milk" or "MILK" or "Milk"
-        );
+    //     .filter(task =>
+    //         task.title.toLowerCase().includes(searchQuery.toLowerCase())
+    //         // 👆 Step 2 — apply search filter on TOP of the status filter
+    //         // .toLowerCase() on both sides — makes search case-insensitive
+    //         // "Buy Milk" matches search "milk" or "MILK" or "Milk"
+    //     );
     // 👆 Chaining .filter() twice — narrows down step by step
     // First by status, then by search text — both apply together!
 
@@ -257,10 +305,11 @@ export default function DashboardPage() {
 
                 {/* Task List */}
                 <div className="flex flex-col gap-3">
-                    {filteredTasks.length === 0 && (
+                    {tasks.length === 0 && (
                         <p className="text-center text-gray-400 py-8">No tasks found</p>
                     )}
-                    {filteredTasks.map((task) => (
+                    {tasks.map((task) => (
+                        // 👆 Changed from filteredTasks.map to tasks.map
                         <div key={task.id} className="bg-white p-4 rounded-xl shadow-sm">
                             <div className="flex justify-between items-start">
                                 <div className="flex-1">
