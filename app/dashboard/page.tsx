@@ -7,6 +7,7 @@ import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import TaskSkeleton from "@/app/components/TaskSkeleton";
 import { TasksApiResponse, Task } from "@/lib/types";
+import AiAssistant from "@/app/components/AiAssistant";
 
 export default function DashboardPage() {
     const router = useRouter();
@@ -104,6 +105,7 @@ export default function DashboardPage() {
         return () => clearTimeout(timer);
         // 👆 CRITICAL — cancels the previous timer every time searchQuery changes
     }, [searchQuery]);
+    // 👆 Runs every time searchQuery changes (every keystroke)
 
     useEffect(() => {
         fetchTasks(1);
@@ -523,6 +525,9 @@ export default function DashboardPage() {
                 <p className="text-center text-[#94A3B8] text-xs mt-3">
                     {totalTasks} total task{totalTasks !== 1 ? "s" : ""}
                 </p>
+
+                {/* ⭐ NEW — AI Assistant Panel */}
+                <AiAssistant />
             </div>
 
             {/* ⭐ FIXED — Delete confirmation dialog with translucent backdrop,
