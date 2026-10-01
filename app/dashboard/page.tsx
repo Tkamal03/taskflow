@@ -61,7 +61,17 @@ export default function DashboardPage() {
     const statusOptions = ["Todo", "InProgress", "Done"];
     const statusLabels: Record<string, string> = { Todo: "Todo", InProgress: "In progress", Done: "Done" };
     // 👆 Record<string, string> — a typed dictionary mapping internal status
-    // values to their nicer display labels (learned this pattern on Day 9!)
+
+    const [improvingTaskId, setImprovingTaskId] = useState<string | null>(null);
+    // ⭐ NEW — tracks WHICH task is currently being improved by AI
+    // null = no improvement in progress
+    // string (task ID) = that specific task is being processed
+
+    const [improvedDescriptions, setImprovedDescriptions] = useState<Record<string, string>>({});
+    // ⭐ NEW — stores AI-improved descriptions keyed by task ID
+    // Record<string, string> = a typed dictionary { taskId: improvedText }
+    // Example: { "cmq123": "Identify and fix the login bug..." }
+    // We store ALL improvements so user can review before accepting
 
     async function fetchTasks(page: number = 1) {
         setTasksLoading(true);
@@ -183,6 +193,94 @@ export default function DashboardPage() {
     async function handleLogout() {
         await signOut({ redirect: false });
         router.push("/login");
+    }
+
+    async function handleImproveDescription(task: Task) {
+        // ⭐ NEW — calls the AI to improve a specific task's description
+        setImprovingTaskId(task.id);
+        // 👆 Show the improvement UI for THIS specific task
+        // Clears any previous improved description for this task
+
+        setImprovedDescriptions(prev => {
+            const updated = { ...prev };
+            delete updated[task.id];
+            return updated;
+            // 👆 Remove any existing improvement for this task
+            // so the loading spinner shows while we fetch a fresh one
+        });
+
+        try {
+            const response = await fetch("/api/ai/improve-task", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    title: task.title,
+                    description: task.description
+                    // 👆 Sending BOTH title and description to the AI
+                    // Title gives context, description is what gets improved
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                setImprovedDescriptions(prev => ({
+                    ...prev,
+                    [task.id]: data.improvedDescription
+                    // 👆 Store the improved text keyed by task ID
+                    // Spread existing improvements + add/update this task's
+                }));
+            } else {
+                setToast({ message: data.message || "Failed to improve description", type: "error" });
+                setImprovingTaskId(null);
+                // 👆 Hide the improvement panel if there was an error
+            }
+        } catch (error) {
+            setToast({ message: "Failed to connect to AI", type: "error" });
+            setImprovingTaskId(null);
+        }
+    }
+
+    async function handleAcceptImprovement(taskId: string, newDescription: string) {
+        // ⭐ NEW — user clicked "Accept" — saves the AI description to the database
+        const response = await fetch(`/api/tasks/${taskId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ description: newDescription })
+            // 👆 Reusing our EXISTING PUT endpoint from Week 2!
+            // We just update the description field, everything else stays the same
+            // This is why building a proper API layer matters — we can reuse it!
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            setToast({ message: "✨ Task description improved!", type: "success" });
+            setImprovingTaskId(null);
+            // 👆 Hide the improvement panel
+            setImprovedDescriptions(prev => {
+                const updated = { ...prev };
+                delete updated[taskId];
+                return updated;
+                // 👆 Clean up the stored improvement — no longer needed
+            });
+            fetchTasks(currentPage);
+            // 👆 Refresh the task list to show the updated description
+        } else {
+            setToast({ message: "Failed to save improvement", type: "error" });
+        }
+    }
+
+    function handleDismissImprovement(taskId: string) {
+        // ⭐ NEW — user clicked "Dismiss" — discard the AI suggestion, keep original
+        setImprovingTaskId(null);
+        // 👆 Hide the improvement panel
+        setImprovedDescriptions(prev => {
+            const updated = { ...prev };
+            delete updated[taskId];
+            return updated;
+            // 👆 Clean up the stored improvement
+        });
     }
 
     if (status === "loading" || loading) {
@@ -450,6 +548,45 @@ export default function DashboardPage() {
                                             <span className="text-xs text-[#94A3B8]">{task.description}</span>
                                         )}
                                     </div>
+
+                                    {/* ⭐ NEW — AI improvement suggestion UI */}
+                                    {improvingTaskId === task.id && (
+                                        // 👆 Only shows for the SPECIFIC task being improved
+                                        // improvingTaskId tracks which task's improvement is in progress
+                                        <div className="mt-2 p-3 bg-[#F8F7FF] border border-[#E8E5FF] rounded-xl">
+                                            {improvedDescriptions[task.id] ? (
+                                                // 👆 If we have an improved description for this task, show it
+                                                <>
+                                                    <p className="text-xs font-medium text-[#4C3D8F] mb-1">
+                                                        ✨ AI Suggestion
+                                                    </p>
+                                                    <p className="text-xs text-[#1E293B] mb-2 leading-relaxed">
+                                                        {improvedDescriptions[task.id]}
+                                                    </p>
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={() => handleAcceptImprovement(task.id, improvedDescriptions[task.id]!)}
+                                                            className="text-xs bg-[#4C3D8F] text-white px-3 py-1.5 rounded-lg hover:bg-[#3D3173] transition-colors"
+                                                        >
+                                                            ✓ Accept
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDismissImprovement(task.id)}
+                                                            className="text-xs bg-white border border-[#DCE7F5] text-[#475569] px-3 py-1.5 rounded-lg hover:bg-[#F8FAFC] transition-colors"
+                                                        >
+                                                            Dismiss
+                                                        </button>
+                                                    </div>
+                                                </>
+                                            ) : (
+                                                // 👆 Still loading the improvement
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-3 h-3 border-2 border-[#4C3D8F] border-t-transparent rounded-full animate-spin" />
+                                                    <p className="text-xs text-[#4C3D8F]">AI is improving your description...</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* ⭐ NEW — Custom status dropdown (point 1), replaces native <select> */}
@@ -487,10 +624,23 @@ export default function DashboardPage() {
                                     )}
                                 </div>
 
-                                {/* ⭐ NEW — darker, more visible delete icon (point 2) */}
+                                {/* ⭐ NEW — AI Improve button */}
+                                <button
+                                    onClick={() => handleImproveDescription(task)}
+                                    disabled={improvingTaskId === task.id}
+                                    // 👆 Disabled while THIS task is being improved
+                                    // Other tasks' buttons remain enabled
+                                    className="text-[#4C3D8F] hover:bg-[#F8F7FF] p-1.5 rounded-lg transition-colors disabled:opacity-50 text-xs font-medium"
+                                    aria-label={`Improve description for task: ${task.title}`}
+                                // 👆 Accessibility label — same pattern we added in Week 3
+                                >
+                                    ✨
+                                </button>
+
                                 <button
                                     onClick={() => confirmDeleteTask(task)}
                                     className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 p-1.5 rounded-lg transition-colors"
+                                    aria-label={`Delete task: ${task.title}`}
                                 >
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
                                 </button>
