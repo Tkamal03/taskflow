@@ -73,6 +73,15 @@ export default function DashboardPage() {
     // Example: { "cmq123": "Identify and fix the login bug..." }
     // We store ALL improvements so user can review before accepting
 
+    const [prioritySuggesting, setPrioritySuggesting] = useState(false);
+    // ⭐ NEW — tracks loading state specifically for the priority suggestion
+    // Separate from the main `loading` state so it doesn't affect
+    // the rest of the dashboard while AI is suggesting a priority
+
+    const [priorityReason, setPriorityReason] = useState("");
+    // ⭐ NEW — stores the AI's reason for the suggested priority
+    // Shows briefly below the priority chips so user understands WHY
+
     async function fetchTasks(page: number = 1) {
         setTasksLoading(true);
         const params = new URLSearchParams({
@@ -283,6 +292,50 @@ export default function DashboardPage() {
         });
     }
 
+    async function handleSuggestPriority() {
+        // ⭐ NEW — calls the AI to suggest a priority for the current task
+        if (!newTask.title.trim()) {
+            setToast({ message: "Please enter a task title first", type: "error" });
+            return;
+            // 👆 Can't suggest priority without a title — show helpful message
+        }
+
+        setPrioritySuggesting(true);
+        // 👆 Show loading state on the suggest button
+        setPriorityReason("");
+        // 👆 Clear any previous reason before new suggestion
+
+        try {
+            const response = await fetch("/api/ai/suggest-priority", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    title: newTask.title,
+                    description: newTask.description
+                    // 👆 Sending whatever the user has typed so far
+                    // Works even if description is empty — title alone is enough
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                setNewTask({ ...newTask, priority: data.priority });
+                // 👆 Automatically SET the priority chip to AI's suggestion
+                // ...newTask spreads existing values, only priority changes
+                setPriorityReason(data.reason);
+                // 👆 Store the reason to show the user WHY this priority was chosen
+            } else {
+                setToast({ message: data.message || "Failed to suggest priority", type: "error" });
+            }
+        } catch (error) {
+            setToast({ message: "Failed to connect to AI", type: "error" });
+        } finally {
+            setPrioritySuggesting(false);
+            // 👆 Always turn off loading state — success or error
+        }
+    }
+
     if (status === "loading" || loading) {
         return (
             <main className="min-h-screen bg-gradient-to-br from-[#EEF4FC] via-[#E3EDFA] to-[#DCE9FA]">
@@ -465,22 +518,59 @@ export default function DashboardPage() {
                                     onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
                                     className="bg-white border border-[#DCE7F5] rounded-xl px-3.5 py-2.5 text-sm text-[#1E293B] placeholder-[#94A3B8] outline-none focus:border-[#3B6FE0]"
                                 />
-                                <div className="flex gap-2">
-                                    {["Low", "Medium", "High"].map((p) => (
+                                <div className="flex flex-col gap-1.5">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-[13px] font-medium text-[#334155]">Priority</span>
+                                        {/* ⭐ NEW — AI Suggest button next to the Priority label */}
                                         <button
-                                            key={p}
-                                            onClick={() => setNewTask({ ...newTask, priority: p })}
-                                            className={`flex-1 text-center py-2 rounded-lg text-[13px] font-medium border transition-colors ${newTask.priority === p
-                                                ? p === "Low" ? "bg-emerald-50 border-emerald-300 text-emerald-700"
-                                                    : p === "Medium" ? "bg-amber-50 border-amber-300 text-amber-700"
-                                                        : "bg-rose-50 border-rose-300 text-rose-700"
-                                                : "bg-white border-[#DCE7F5] text-[#64748B]"
-                                                }`}
+                                            onClick={handleSuggestPriority}
+                                            disabled={prioritySuggesting || !newTask.title.trim()}
+                                            // 👆 Disabled when suggesting OR when no title entered yet
+                                            className="text-[11px] text-[#4C3D8F] hover:text-[#3D3173] font-medium flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                                         >
-                                            {p}
+                                            {prioritySuggesting ? (
+                                                <>
+                                                    <div className="w-3 h-3 border-2 border-[#4C3D8F] border-t-transparent rounded-full animate-spin" />
+                                                    Suggesting...
+                                                </>
+                                            ) : (
+                                                <>✨ AI Suggest</>
+                                            )}
                                         </button>
-                                    ))}
+                                    </div>
+
+                                    <div className="flex gap-2">
+                                        {["Low", "Medium", "High"].map((p) => (
+                                            <button
+                                                key={p}
+                                                onClick={() => {
+                                                    setNewTask({ ...newTask, priority: p });
+                                                    setPriorityReason("");
+                                                    // 👆 Clear AI reason when user manually picks a priority
+                                                    // No longer relevant if user overrides the AI suggestion
+                                                }}
+                                                className={`flex-1 text-center py-2 rounded-lg text-[13px] font-medium border transition-colors ${newTask.priority === p
+                                                    ? p === "Low" ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                                                        : p === "Medium" ? "bg-amber-50 border-amber-300 text-amber-700"
+                                                            : "bg-rose-50 border-rose-300 text-rose-700"
+                                                    : "bg-white border-[#DCE7F5] text-[#64748B]"
+                                                    }`}
+                                            >
+                                                {p}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {/* ⭐ NEW — Shows AI's reasoning for the suggested priority */}
+                                    {priorityReason && (
+                                        <p className="text-[11px] text-[#4C3D8F] bg-[#F8F7FF] border border-[#E8E5FF] rounded-lg px-2.5 py-1.5">
+                                            ✨ AI suggests <strong>{newTask.priority}</strong>: {priorityReason}
+                                            {/* 👆 Shows why the AI chose this priority
+           Transparency builds user trust — they can agree or override */}
+                                        </p>
+                                    )}
                                 </div>
+
                                 <button
                                     onClick={handleAddTask}
                                     className="bg-[#4C3D8F] hover:bg-[#3D3173] text-white font-medium text-sm py-2.5 rounded-xl shadow-[0_8px_20px_rgba(76,61,143,0.4)] transition-colors mt-1"
