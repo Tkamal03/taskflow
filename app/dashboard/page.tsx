@@ -8,6 +8,8 @@ import { useRouter } from "next/navigation";
 import TaskSkeleton from "@/app/components/TaskSkeleton";
 import { TasksApiResponse, Task } from "@/lib/types";
 import AiAssistant from "@/app/components/AiAssistant";
+import Link from "next/link";
+// 👆 NEW — for the AI Assistant navigation link in the header
 
 export default function DashboardPage() {
     const router = useRouter();
@@ -388,6 +390,19 @@ export default function DashboardPage() {
                     </div>
                     <span className="text-base font-semibold text-[#1E3A5F] font-display">TaskFlow</span>
                 </div>
+
+                {/* ⭐ NEW — AI Assistant navigation link */}
+                <Link
+                    href="/ai-chat"
+                    className="text-sm font-medium text-[#4C3D8F] hover:text-[#3D3173] transition-colors flex items-center gap-1.5 bg-[#F8F7FF] border border-[#E8E5FF] px-3 py-1.5 rounded-lg"
+                >
+                    ✨ AI Assistant
+                </Link>
+                {/* 👆 Sits between logo (left) and avatar menu (right)
+                     justify-between on the header spreads all three apart
+                     Gives users a clear way to open the dedicated chat page */}
+
+                {/* User menu — click-based (not hover) dropdown */}
 
                 {/* User menu — click-based (not hover) dropdown */}
                 <div className="relative">
