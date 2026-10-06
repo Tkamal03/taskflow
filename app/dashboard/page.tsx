@@ -7,7 +7,6 @@ import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import TaskSkeleton from "@/app/components/TaskSkeleton";
 import { TasksApiResponse, Task } from "@/lib/types";
-import AiAssistant from "@/app/components/AiAssistant";
 import Link from "next/link";
 // 👆 NEW — for the AI Assistant navigation link in the header
 
@@ -84,6 +83,23 @@ export default function DashboardPage() {
     // ⭐ NEW — stores the AI's reason for the suggested priority
     // Shows briefly below the priority chips so user understands WHY
 
+    const [showAiPanel, setShowAiPanel] = useState(false);
+    // 👆 Controls whether inline AI panel is visible
+
+    const [aiPanelPrompt, setAiPanelPrompt] = useState("");
+    // 👆 Current input text
+
+    const [aiPanelMessages, setAiPanelMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+    // ⭐ UPGRADED — full conversation history (replaces single response string)
+    // Same Message pattern as our AiAssistant component and /ai-chat page
+
+    const [aiPanelLoading, setAiPanelLoading] = useState(false);
+    // 👆 Loading state while AI responds
+
+    const aiPanelScrollRef = useRef<HTMLDivElement>(null);
+    // ⭐ ref to the scrollable chat container
+    // Used to scroll only the panel, not the whole page
+
     async function fetchTasks(page: number = 1) {
         setTasksLoading(true);
         const params = new URLSearchParams({
@@ -132,6 +148,82 @@ export default function DashboardPage() {
         fetchTasks(1);
         // 👆 Whenever searchQuery OR filter changes, go back to PAGE 1 and re-fetch
     }, [debouncedSearch, filter]);
+
+    useEffect(() => {
+        // ⭐ fix scroll the panel every time messages change OR loading changes
+        // This catches BOTH cases:
+        // - When user message appears (messages change)
+        // - When loading bubble appears/disappears (loading changes)
+        // - When AI reply appears (messages change again)
+        if (aiPanelScrollRef.current) {
+            aiPanelScrollRef.current.scrollTo({
+                top: aiPanelScrollRef.current.scrollHeight,
+                behavior: "smooth"
+            });
+        }
+    }, [aiPanelMessages, aiPanelLoading]);
+    // 👆 Watches BOTH — covers every state change in the conversation
+
+    async function handleAiPanelAsk() {
+        if (!aiPanelPrompt.trim() || aiPanelLoading) return;
+        // 👆 Guard against empty or double-submit
+
+        const userMessage = { role: "user" as const, content: aiPanelPrompt };
+        const updatedMessages = [...aiPanelMessages, userMessage];
+        // ⭐ Build updated history including new user message
+
+        setAiPanelMessages(updatedMessages);
+        // 👆 Show user message immediately (optimistic update)
+        setAiPanelPrompt("");
+        // 👆 Auto-clear input
+        setAiPanelLoading(true);
+
+        try {
+            const res = await fetch("/api/ai", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    prompt: aiPanelPrompt,
+                    history: aiPanelMessages
+                    // ⭐ Send full conversation history — same as AiAssistant component
+                })
+            });
+
+            const data = await res.json();
+
+            if (data.success) {
+                setAiPanelMessages([
+                    ...updatedMessages,
+                    { role: "assistant", content: data.message }
+                ]);
+                // ⭐ Add AI reply to conversation history
+            } else {
+                setAiPanelMessages([
+                    ...updatedMessages,
+                    { role: "assistant", content: "Sorry, something went wrong. Please try again." }
+                ]);
+            }
+        } catch (err) {
+            setAiPanelMessages([
+                ...updatedMessages,
+                { role: "assistant", content: "Failed to connect to AI. Please try again." }
+            ]);
+        } finally {
+            setAiPanelLoading(false);
+            // 👆 Auto scroll to bottom after new message
+            setTimeout(() => {
+                if (aiPanelScrollRef.current) {
+                    aiPanelScrollRef.current.scrollTo({
+                        top: aiPanelScrollRef.current.scrollHeight,
+                        behavior: "smooth"
+                    });
+                    // ⭐ scrollTo on the container — ONLY the panel scrolls, page stays still
+                    // behavior: "smooth" — smooth animation instead of sudden jump
+                }
+            }, 150);
+            // 👆 150ms gives React time to render the new message before scrolling
+        }
+    }
 
     async function handleAddTask() {
         if (!newTask.title.trim()) {
@@ -390,20 +482,6 @@ export default function DashboardPage() {
                     </div>
                     <span className="text-base font-semibold text-[#1E3A5F] font-display">TaskFlow</span>
                 </div>
-
-                {/* ⭐ NEW — AI Assistant navigation link */}
-                <Link
-                    href="/ai-chat"
-                    className="text-sm font-medium text-[#4C3D8F] hover:text-[#3D3173] transition-colors flex items-center gap-1.5 bg-[#F8F7FF] border border-[#E8E5FF] px-3 py-1.5 rounded-lg"
-                >
-                    ✨ AI Assistant
-                </Link>
-                {/* 👆 Sits between logo (left) and avatar menu (right)
-                     justify-between on the header spreads all three apart
-                     Gives users a clear way to open the dedicated chat page */}
-
-                {/* User menu — click-based (not hover) dropdown */}
-
                 {/* User menu — click-based (not hover) dropdown */}
                 <div className="relative">
                     <button
@@ -485,7 +563,9 @@ export default function DashboardPage() {
                 {/* Toolbar */}
                 <div className="flex gap-2.5 mb-4.5">
                     <div className="flex-1 flex items-center gap-2 bg-white/65 border border-[#DCE7F5] rounded-xl px-3.5">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2">
+                            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+                        </svg>
                         <input
                             type="text"
                             placeholder="Search tasks by title..."
@@ -493,6 +573,24 @@ export default function DashboardPage() {
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="w-full bg-transparent py-2.5 text-sm text-[#1E293B] placeholder-[#94A3B8] outline-none"
                         />
+                        {/* ⭐ NEW — AI icon button inside search box right side */}
+                        <button
+                            onClick={() => {
+                                setShowAiPanel(!showAiPanel);
+                                // setAiPanelMessages([]);
+                                // setAiPanelPrompt("");
+                                // 👆 Reset panel state when toggling
+                            }}
+                            className="flex-shrink-0 hover:opacity-75 transition-opacity"
+                            aria-label="Ask AI about your tasks"
+                            title="Ask AI"
+                        >
+                            <img
+                                src="/ai-chat-icon.png"
+                                alt="Ask AI"
+                                className="w-6 h-6 object-contain"
+                            />
+                        </button>
                     </div>
                     <button
                         onClick={() => setShowAddForm(!showAddForm)}
@@ -510,6 +608,198 @@ export default function DashboardPage() {
                         {showAddForm ? "Close" : "Add task"}
                     </button>
                 </div>
+                {/* ⭐ UPGRADED — Inline AI panel with full conversation history */}
+                {showAiPanel && (
+                    <div className="bg-white/70 backdrop-blur-md border border-[#E8E5FF] rounded-2xl mb-4 animate-[slideDown_0.25s_ease-out] overflow-hidden">
+                        {/* 👆 overflow-hidden keeps chat bubbles inside the rounded panel */}
+
+                        {/* Panel Header — title + expand + close */}
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-[#E8E5FF]">
+                            <div className="flex items-center gap-2">
+                                <img src="/ai-chat-icon.png" alt="AI" className="w-5 h-5 object-contain" />
+                                <span className="text-sm font-semibold text-[#4C3D8F]">AI Task Assistant</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                {/* ⭐ Clear conversation icon — only clears history, keeps panel open */}
+                                {aiPanelMessages.length > 0 && (
+                                    <button
+                                        onClick={() => { setAiPanelMessages([]); setAiPanelPrompt(""); }}
+                                        className="w-7 h-7 rounded-lg bg-[#F8F7FF] hover:bg-[#EEF2FF] flex items-center justify-center transition-colors"
+                                        title="Clear conversation"
+                                        aria-label="Clear conversation"
+                                    >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2" strokeLinecap="round">
+                                            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+                                        </svg>
+                                    </button>
+                                )}
+                                {/* ⭐ Expand icon */}
+                                <button
+                                    onClick={() => {
+                                        // ⭐ Save current conversation to sessionStorage before navigating
+                                        // sessionStorage persists within the same browser tab session
+                                        // /ai-chat page will read this and restore the conversation
+                                        if (aiPanelMessages.length > 0) {
+                                            sessionStorage.setItem("aiChatHistory", JSON.stringify(aiPanelMessages));
+                                        }
+                                        window.location.href = "/ai-chat";
+                                    }}
+                                    className="w-7 h-7 rounded-lg bg-[#F8F7FF] hover:bg-[#EEF2FF] flex items-center justify-center transition-colors"
+                                    title="Open full screen"
+                                    aria-label="Open full AI chat page"
+                                >
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4C3D8F" strokeWidth="2" strokeLinecap="round">
+                                        <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                                    </svg>
+                                </button>
+                                {/* ⭐ Close icon — closes panel only, history preserved */}
+                                <button
+                                    onClick={() => setShowAiPanel(false)}
+                                    // ⭐ FIX 2 — close no longer clears history
+                                    className="w-7 h-7 rounded-lg bg-[#F8F7FF] hover:bg-[#EEF2FF] flex items-center justify-center transition-colors"
+                                    aria-label="Close AI panel"
+                                >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2.5" strokeLinecap="round">
+                                        <path d="M18 6L6 18M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Chat Messages Area */}
+                        <div
+                            ref={aiPanelScrollRef}
+                            className="max-h-[280px] overflow-y-auto px-4 py-3 flex flex-col gap-3"
+                        >
+                            {/* 👆 max-h-[280px] — compact height for inline panel
+           overflow-y-auto — scrollable when messages pile up */}
+
+                            {/* Empty state — shows when no messages yet */}
+                            {aiPanelMessages.length === 0 && (
+                                <div className="text-center py-4">
+                                    <p className="text-xs text-[#94A3B8]">Ask me anything about your tasks!</p>
+                                    {/* Quick suggestion chips */}
+                                    {/* pop */}
+                                    <div className="flex flex-wrap gap-1.5 mt-3 justify-center">
+                                        {/* {["Prioritize my tasks", "What's most urgent?", "Help me focus"].map((s) => (
+                                            <button
+                                                key={s}
+                                                onClick={() => setAiPanelPrompt(s)}
+                                                className="text-[11px] px-2.5 py-1.5 bg-white border border-[#DCE7F5] rounded-full text-[#475569] hover:border-[#4C3D8F] hover:text-[#4C3D8F] transition-colors"
+                                            >
+                                                {s}
+                                            </button>
+                                        ))} */}
+
+                                        {["Prioritize my tasks", "What's most urgent?", "Help me focus"].map((s) => (
+                                            <button
+                                                key={s}
+                                                onClick={async () => {
+                                                    // ⭐ FIX 1 — directly trigger the AI call instead of just populating input
+                                                    // We can't just setAiPanelPrompt(s) and call handleAiPanelAsk()
+                                                    // because setState is async — the prompt won't be set by the time
+                                                    // handleAiPanelAsk() reads it. So we inline the logic here directly.
+                                                    if (aiPanelLoading) return;
+                                                    const userMessage = { role: "user" as const, content: s };
+                                                    const updatedMessages = [...aiPanelMessages, userMessage];
+                                                    setAiPanelMessages(updatedMessages);
+                                                    setAiPanelLoading(true);
+                                                    try {
+                                                        const res = await fetch("/api/ai", {
+                                                            method: "POST",
+                                                            headers: { "Content-Type": "application/json" },
+                                                            body: JSON.stringify({ prompt: s, history: aiPanelMessages })
+                                                        });
+                                                        const data = await res.json();
+                                                        setAiPanelMessages([
+                                                            ...updatedMessages,
+                                                            { role: "assistant", content: data.success ? data.message : "Something went wrong." }
+                                                        ]);
+                                                    } catch {
+                                                        setAiPanelMessages([...updatedMessages, { role: "assistant", content: "Failed to connect to AI." }]);
+                                                    } finally {
+                                                        setAiPanelLoading(false);
+                                                        setTimeout(() => {
+                                                            if (aiPanelScrollRef.current) {
+                                                                aiPanelScrollRef.current.scrollTo({
+                                                                    top: aiPanelScrollRef.current.scrollHeight,
+                                                                    behavior: "smooth"
+                                                                });
+                                                            }
+                                                        }, 150);
+                                                    }
+                                                }}
+                                                className="text-[11px] px-2.5 py-1.5 bg-white border border-[#DCE7F5] rounded-full text-[#475569] hover:border-[#4C3D8F] hover:text-[#4C3D8F] transition-colors"
+                                            >
+                                                {s}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Conversation messages */}
+                            {aiPanelMessages.map((msg, index) => (
+                                <div
+                                    key={index}
+                                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                                >
+                                    <div
+                                        className={`max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed ${msg.role === "user"
+                                            ? "bg-[#4C3D8F] text-white rounded-br-sm"
+                                            : "bg-[#F8F7FF] border border-[#E8E5FF] text-[#1E293B] rounded-bl-sm"
+                                            }`}
+                                    >
+                                        {msg.role === "assistant" && (
+                                            <p className="text-[10px] font-medium text-[#4C3D8F] mb-1">AI Assistant</p>
+                                        )}
+                                        <p className="whitespace-pre-wrap text-[13px]">{msg.content}</p>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {/* Loading bubble */}
+                            {aiPanelLoading && (
+                                <div className="flex justify-start">
+                                    <div className="bg-[#F8F7FF] border border-[#E8E5FF] px-3 py-2.5 rounded-xl rounded-bl-sm flex items-center gap-2">
+                                        <div className="flex gap-1">
+                                            <div className="w-1.5 h-1.5 bg-[#4C3D8F] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                                            <div className="w-1.5 h-1.5 bg-[#4C3D8F] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                                            <div className="w-1.5 h-1.5 bg-[#4C3D8F] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                                        </div>
+                                        <p className="text-[12px] text-[#4C3D8F]">Thinking...</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Input row — sticky at bottom of panel */}
+                        <div className="px-4 pb-3 pt-2 border-t border-[#E8E5FF]">
+                            <div className="flex items-center gap-2 bg-white border border-[#DCE7F5] rounded-xl px-3.5 focus-within:border-[#4C3D8F] focus-within:ring-1 focus-within:ring-[#4C3D8F] transition-colors">
+                                <input
+                                    type="text"
+                                    value={aiPanelPrompt}
+                                    onChange={(e) => setAiPanelPrompt(e.target.value)}
+                                    onKeyDown={(e) => e.key === "Enter" && !aiPanelLoading && handleAiPanelAsk()}
+                                    placeholder={aiPanelMessages.length === 0 ? "Ask about your tasks..." : "Continue the conversation..."}
+                                    className="flex-1 bg-transparent py-2.5 text-sm text-[#1E293B] placeholder-[#94A3B8] outline-none"
+                                    autoFocus
+                                />
+                                {/* Send icon inside input */}
+                                <button
+                                    onClick={handleAiPanelAsk}
+                                    disabled={aiPanelLoading || !aiPanelPrompt.trim()}
+                                    className="flex-shrink-0 text-[#4C3D8F] hover:text-[#3D3173] disabled:opacity-40 transition-colors"
+                                    aria-label="Send message"
+                                >
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                        <path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* ⭐ NEW — Inline collapsible Add Task form (point 3) */}
                 {showAddForm && (
@@ -780,9 +1070,6 @@ export default function DashboardPage() {
                 <p className="text-center text-[#94A3B8] text-xs mt-3">
                     {totalTasks} total task{totalTasks !== 1 ? "s" : ""}
                 </p>
-
-                {/* ⭐ NEW — AI Assistant Panel */}
-                <AiAssistant />
             </div>
 
             {/* ⭐ FIXED — Delete confirmation dialog with translucent backdrop,
