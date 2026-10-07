@@ -4,6 +4,7 @@ import AiMessageList from "@/app/components/AiChat/AiMessageList";
 import AiInputBox from "@/app/components/AiChat/AiInputBox";
 import AiSuggestionChips from "@/app/components/AiChat/AiSuggestionChips";
 import { Message } from "@/app/components/AiChat/AiMessageList";
+import AiChatDownload from "@/app/components/AiChat/AiChatDownload";
 
 interface AiPanelProps {
     messages: Message[];
@@ -40,7 +41,8 @@ export default function AiPanel({
                     <span className="text-sm font-semibold text-[#4C3D8F]">AI Task Assistant</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-
+                    {/* ⭐ NEW — Download button */}
+                    <AiChatDownload messages={messages} />
                     {/* Clear icon */}
                     {messages.length > 0 && (
                         <button

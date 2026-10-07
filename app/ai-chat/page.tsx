@@ -7,6 +7,7 @@ import { useAiChat } from "@/app/components/AiChat/useAiChat";
 import AiMessageList from "@/app/components/AiChat/AiMessageList";
 import AiInputBox from "@/app/components/AiChat/AiInputBox";
 import AiSuggestionChips from "@/app/components/AiChat/AiSuggestionChips";
+import AiChatDownload from "@/app/components/AiChat/AiChatDownload";
 // ⭐ All AI logic comes from shared components — this file is now a thin wrapper!
 
 export default function AiChatPage() {
@@ -59,17 +60,23 @@ export default function AiChatPage() {
                     </div>
                 </div>
 
-                {/* Right — back to dashboard icon */}
-                <Link
-                    href="/dashboard"
-                    className="w-8 h-8 rounded-lg bg-white/40 hover:bg-white/70 flex items-center justify-center transition-colors"
-                    aria-label="Back to dashboard"
-                    title="Back to dashboard"
-                >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4C3D8F" strokeWidth="2" strokeLinecap="round">
-                        <path d="M19 12H5M12 19l-7-7 7-7" />
-                    </svg>
-                </Link>
+                {/* Right side — download + back to dashboard */}
+                <div className="flex items-center gap-2">
+                    {/* ⭐ NEW — Download button */}
+                    <AiChatDownload messages={messages} />
+
+                    {/* Back to dashboard */}
+                    <Link
+                        href="/dashboard"
+                        className="w-8 h-8 rounded-lg bg-white/40 hover:bg-white/70 flex items-center justify-center transition-colors"
+                        aria-label="Back to dashboard"
+                        title="Back to dashboard"
+                    >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4C3D8F" strokeWidth="2" strokeLinecap="round">
+                            <path d="M19 12H5M12 19l-7-7 7-7" />
+                        </svg>
+                    </Link>
+                </div>
             </div>
 
             {/* Chat messages — scrollable, flex-1 fills remaining space */}
