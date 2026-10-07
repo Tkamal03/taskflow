@@ -7,12 +7,19 @@ import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import TaskSkeleton from "@/app/components/TaskSkeleton";
 import { TasksApiResponse, Task } from "@/lib/types";
-import AiMessageList from "@/app/components/AiChat/AiMessageList";
-import AiInputBox from "@/app/components/AiChat/AiInputBox";
-import AiSuggestionChips from "@/app/components/AiChat/AiSuggestionChips";
 import { useAiChat } from "@/app/components/AiChat/useAiChat";
-import Link from "next/link";
-// 👆 NEW — for the AI Assistant navigation link in the header
+import TaskList from "@/app/components/Dashboard/TaskList";
+import AddTaskForm from "@/app/components/Dashboard/AddTaskForm";
+import AiPanel from "@/app/components/Dashboard/AiPanel";
+import Pagination from "@/app/components/Dashboard/Pagination";
+import DashboardHeader from "@/app/components/Dashboard/DashboardHeader";
+
+const statusLabels: Record<string, string> = {
+    Todo: "Todo",
+    InProgress: "In progress",
+    Done: "Done"
+};
+// 👆 Record<string, string> — a typed dictionary mapping internal status
 
 export default function DashboardPage() {
     const router = useRouter();
@@ -62,10 +69,6 @@ export default function DashboardPage() {
 
     const [userMenuOpen, setUserMenuOpen] = useState(false);
     // ⭐ NEW — controls the user avatar dropdown (click-based, not hover-based)
-
-    const statusOptions = ["Todo", "InProgress", "Done"];
-    const statusLabels: Record<string, string> = { Todo: "Todo", InProgress: "In progress", Done: "Done" };
-    // 👆 Record<string, string> — a typed dictionary mapping internal status
 
     const [improvingTaskId, setImprovingTaskId] = useState<string | null>(null);
     // ⭐ NEW — tracks WHICH task is currently being improved by AI
@@ -408,77 +411,27 @@ export default function DashboardPage() {
             )}
 
             {/* Header */}
-            <div className="bg-white/55 backdrop-blur-md border-b border-white/70 px-8 py-3.5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    {/* ⭐ UPDATED LOGO — interlocking flow loops, matches Kamal's reference image */}
-                    <div className="w-8 h-8 rounded-[9px] bg-[#4C3D8F] flex items-center justify-center">
-                        {/* 👆 Solid #4C3D8F — matches the active Filter button color exactly */}
-                        {/* 👆 Grape → Coneflower — one shade darker than before */}
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                            <path d="M8 6C5.5 6 4 8 4 10.5C4 13 6 15 8.5 15C11 15 13 13 13 10.5"
-                                stroke="white" strokeWidth="2.3" strokeLinecap="round" fill="none" />
-                            <path d="M16 18C18.5 18 20 16 20 13.5C20 11 18 9 15.5 9C13 9 11 11 11 13.5"
-                                stroke="white" strokeWidth="2.3" strokeLinecap="round" fill="none" />
-                        </svg>
-                    </div>
-                    <span className="text-base font-semibold text-[#1E3A5F] font-display">TaskFlow</span>
-                </div>
-                {/* User menu — click-based (not hover) dropdown */}
-                <div className="relative">
-                    <button
-                        onClick={() => setUserMenuOpen(!userMenuOpen)}
-                        className="w-9 h-9 rounded-full bg-[#4C3D8F] text-white flex items-center justify-center text-sm font-semibold cursor-pointer"
-                        aria-label={`Open menu for ${session?.user?.name || "your account"}`}
-                    >
-                        {session?.user?.name?.charAt(0).toUpperCase() || "U"}
-                    </button>
-                    {userMenuOpen && (
-                        <>
-                            {/* 👆 Invisible full-screen layer to detect "click outside" and close the menu */}
-                            <div
-                                className="fixed inset-0 z-10"
-                                onClick={() => setUserMenuOpen(false)}
-                            />
-                            <div className="absolute top-11 right-0 bg-white border border-[#E2E8F0] rounded-xl shadow-lg w-48 p-1.5 z-20">
-                                <div className="px-3 py-2 text-xs text-[#64748B] flex items-center gap-2 truncate">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0"><circle cx="12" cy="8" r="4" /><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2" /></svg>
-                                    {session?.user?.email}
-                                </div>
-                                <div className="h-px bg-[#F1F5F9] my-1"></div>
-                                <button
-                                    onClick={handleLogout}
-                                    className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2"
-                                >
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></svg>
-                                    Log out
-                                </button>
-                            </div>
-                        </>
-                    )}
-                </div>
-            </div>
+            <DashboardHeader
+                userName={session?.user?.name}
+                userEmail={session?.user?.email}
+                onLogout={handleLogout}
+                userMenuOpen={userMenuOpen}
+                setUserMenuOpen={setUserMenuOpen}
+            />
 
             <div className="max-w-[1040px] mx-auto p-7">
-                {/* 👆 CHANGED — widened container (point 4) */}
-
-                {/* Hero row — progress ring + greeting */}
+                {/* progress ring + greeting */}
                 <div className="flex items-center gap-6 mb-7">
                     <div className="relative w-[84px] h-[84px] flex-shrink-0">
                         <svg width="84" height="84" viewBox="0 0 84 84" className="-rotate-90">
                             <defs>
-                                {/* ⭐ FINAL — 3-stop gradient using exact sampled colors from Kamal's 
-         reference palette: Coneflower → Amethyst → app blue */}
                                 <linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                                     <stop offset="0%" stopColor="#A374C2" />
-                                    {/* 👆 Grape — sampled from the same reference palette, one shade darker */}
                                     <stop offset="55%" stopColor="#B593CF" />
-                                    {/* 👆 Coneflower — shifted into the middle position */}
                                     <stop offset="100%" stopColor="#3B6FE0" />
-                                    {/* 👆 App's primary blue — unchanged */}
                                 </linearGradient>
                             </defs>
                             <circle cx="42" cy="42" r="36" fill="none" stroke="#E0E7F7" strokeWidth="7" />
-                            {/* 👆 CHANGED — light blue-gray track instead of light purple */}
                             <circle
                                 cx="42" cy="42" r="36" fill="none" stroke="url(#ringGradient)" strokeWidth="7"
                                 strokeLinecap="round"
@@ -487,7 +440,6 @@ export default function DashboardPage() {
                             />
                         </svg>
                         <div className="absolute inset-0 flex items-center justify-center text-base font-semibold text-[#1E3A5F]">
-                            {/* 👆 CHANGED — dark blue (matches header logo text color) instead of dark purple */}
                             {completionPercent}%
                         </div>
                     </div>
@@ -532,13 +484,10 @@ export default function DashboardPage() {
                     <button
                         onClick={() => setShowAddForm(!showAddForm)}
                         className="bg-[#4C3D8F] hover:bg-[#3D3173] text-white font-medium text-sm px-4.5 rounded-xl flex items-center gap-1.5 shadow-[0_8px_20px_rgba(76,61,143,0.4)] transition-colors whitespace-nowrap"
-                    // 👆 #4C3D8F base, manually darkened hover state, shadow color updated to match
                     >
                         <svg
                             width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"
                             className={`transition-transform ${showAddForm ? "rotate-45" : ""}`}
-                        // 👆 NICE TOUCH — the + icon rotates into an × shape when form is open,
-                        // visually communicating "click again to close"
                         >
                             <path d="M12 5v14M5 12h14" />
                         </svg>
@@ -547,179 +496,40 @@ export default function DashboardPage() {
                 </div>
                 {/* ⭐ Inline AI panel — uses shared AiChat components */}
                 {showAiPanel && (
-                    <div className="bg-white/70 backdrop-blur-md border border-[#E8E5FF] rounded-2xl mb-4 animate-[slideDown_0.25s_ease-out] overflow-hidden">
-
-                        {/* Panel Header */}
-                        <div className="flex items-center justify-between px-4 py-3 border-b border-[#E8E5FF]">
-                            <div className="flex items-center gap-2">
-                                <img src="/ai-chat-icon.png" alt="AI" className="w-5 h-5 object-contain" />
-                                <span className="text-sm font-semibold text-[#4C3D8F]">AI Task Assistant</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                                {/* Clear icon */}
-                                {aiPanelMessages.length > 0 && (
-                                    <button
-                                        onClick={clearAiMessages}
-                                        className="w-7 h-7 rounded-lg bg-[#F8F7FF] hover:bg-[#EEF2FF] flex items-center justify-center transition-colors"
-                                        title="Clear conversation"
-                                        aria-label="Clear conversation"
-                                    >
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2" strokeLinecap="round">
-                                            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-                                        </svg>
-                                    </button>
-                                )}
-                                {/* Expand to /ai-chat */}
-                                <button
-                                    onClick={() => {
-                                        if (aiPanelMessages.length > 0) {
-                                            sessionStorage.setItem("aiChatHistory", JSON.stringify(aiPanelMessages));
-                                        }
-                                        window.location.href = "/ai-chat";
-                                    }}
-                                    className="w-7 h-7 rounded-lg bg-[#F8F7FF] hover:bg-[#EEF2FF] flex items-center justify-center transition-colors"
-                                    title="Open full screen"
-                                    aria-label="Open full AI chat page"
-                                >
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4C3D8F" strokeWidth="2" strokeLinecap="round">
-                                        <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-                                    </svg>
-                                </button>
-                                {/* Close panel */}
-                                <button
-                                    onClick={() => setShowAiPanel(false)}
-                                    className="w-7 h-7 rounded-lg bg-[#F8F7FF] hover:bg-[#EEF2FF] flex items-center justify-center transition-colors"
-                                    aria-label="Close AI panel"
-                                >
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2.5" strokeLinecap="round">
-                                        <path d="M18 6L6 18M6 6l12 12" />
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Messages area */}
-                        <div
-                            ref={aiPanelScrollRef}
-                            className="px-4 py-3 max-h-[280px] overflow-y-auto flex flex-col gap-3"
-                        >
-                            {aiPanelMessages.length === 0 && !aiPanelLoading && (
-                                <div className="text-center py-4">
-                                    <p className="text-xs text-[#94A3B8]">Ask me anything about your tasks!</p>
-                                    <AiSuggestionChips
-                                        onSend={sendAiMessage}
-                                        disabled={aiPanelLoading}
-                                    />
-                                </div>
-                            )}
-                            <AiMessageList
-                                messages={aiPanelMessages}
-                                loading={aiPanelLoading}
-                                scrollContainerRef={aiPanelScrollRef}
-                            />
-                        </div>
-
-                        {/* Input */}
-                        <div className="px-4 pb-3 pt-2 border-t border-[#E8E5FF]">
-                            <AiInputBox
-                                prompt={aiPanelPrompt}
-                                onPromptChange={setAiPanelPrompt}
-                                onSend={() => sendAiMessage()}
-                                onClear={clearAiMessages}
-                                loading={aiPanelLoading}
-                                hasMessages={aiPanelMessages.length > 0}
-                                autoFocus={true}
-                            />
-                        </div>
-                    </div>
+                    <AiPanel
+                        messages={aiPanelMessages}
+                        prompt={aiPanelPrompt}
+                        loading={aiPanelLoading}
+                        scrollContainerRef={aiPanelScrollRef}
+                        onPromptChange={setAiPanelPrompt}
+                        onSend={() => sendAiMessage()}
+                        onSendChip={sendAiMessage}
+                        onClear={clearAiMessages}
+                        onClose={() => setShowAiPanel(false)}
+                        onExpand={() => {
+                            if (aiPanelMessages.length > 0) {
+                                sessionStorage.setItem("aiChatHistory", JSON.stringify(aiPanelMessages));
+                            }
+                            window.location.href = "/ai-chat";
+                        }}
+                    />
                 )}
 
                 {/* ⭐ NEW — Inline collapsible Add Task form (point 3) */}
-
-                {/* ⭐ NEW — Inline collapsible Add Task form (point 3) */}
+                {/* Add Task form */}
                 {showAddForm && (
-                    <div className="bg-gradient-to-br from-[#DCE4FA] to-[#C5D2F2] border border-white/60 rounded-2xl p-3.5 mb-4.5 animate-[slideDown_0.25s_ease-out]">
-                        {/* 👆 NEW — outer layer is now a darker two-tone gradient (point: "form background darker") */}
-                        <div className="bg-white/55 backdrop-blur-md rounded-[14px] p-4">
-                            {/* 👆 NEW — inner frosted panel holds the actual fields, 
-             creating the same "card within a card" depth as the delete dialog */}
-                            <div className="flex flex-col gap-2.5">
-                                <input
-                                    type="text"
-                                    placeholder="Task title"
-                                    value={newTask.title}
-                                    onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
-                                    className="bg-white border border-[#DCE7F5] rounded-xl px-3.5 py-2.5 text-sm text-[#1E293B] placeholder-[#94A3B8] outline-none focus:border-[#3B6FE0]"
-                                />
-                                <input
-                                    type="text"
-                                    placeholder="Description (optional)"
-                                    value={newTask.description}
-                                    onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
-                                    className="bg-white border border-[#DCE7F5] rounded-xl px-3.5 py-2.5 text-sm text-[#1E293B] placeholder-[#94A3B8] outline-none focus:border-[#3B6FE0]"
-                                />
-                                <div className="flex flex-col gap-1.5">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-[13px] font-medium text-[#334155]">Priority</span>
-                                        {/* ⭐ NEW — AI Suggest button next to the Priority label */}
-                                        <button
-                                            onClick={handleSuggestPriority}
-                                            disabled={prioritySuggesting || !newTask.title.trim()}
-                                            // 👆 Disabled when suggesting OR when no title entered yet
-                                            className="text-[11px] text-[#4C3D8F] hover:text-[#3D3173] font-medium flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                                        >
-                                            {prioritySuggesting ? (
-                                                <>
-                                                    <div className="w-3 h-3 border-2 border-[#4C3D8F] border-t-transparent rounded-full animate-spin" />
-                                                    Suggesting...
-                                                </>
-                                            ) : (
-                                                <>✨ AI Suggest</>
-                                            )}
-                                        </button>
-                                    </div>
-
-                                    <div className="flex gap-2">
-                                        {["Low", "Medium", "High"].map((p) => (
-                                            <button
-                                                key={p}
-                                                onClick={() => {
-                                                    setNewTask({ ...newTask, priority: p });
-                                                    setPriorityReason("");
-                                                    // 👆 Clear AI reason when user manually picks a priority
-                                                    // No longer relevant if user overrides the AI suggestion
-                                                }}
-                                                className={`flex-1 text-center py-2 rounded-lg text-[13px] font-medium border transition-colors ${newTask.priority === p
-                                                    ? p === "Low" ? "bg-emerald-50 border-emerald-300 text-emerald-700"
-                                                        : p === "Medium" ? "bg-amber-50 border-amber-300 text-amber-700"
-                                                            : "bg-rose-50 border-rose-300 text-rose-700"
-                                                    : "bg-white border-[#DCE7F5] text-[#64748B]"
-                                                    }`}
-                                            >
-                                                {p}
-                                            </button>
-                                        ))}
-                                    </div>
-
-                                    {/* ⭐ NEW — Shows AI's reasoning for the suggested priority */}
-                                    {priorityReason && (
-                                        <p className="text-[11px] text-[#4C3D8F] bg-[#F8F7FF] border border-[#E8E5FF] rounded-lg px-2.5 py-1.5">
-                                            ✨ AI suggests <strong>{newTask.priority}</strong>: {priorityReason}
-                                            {/* 👆 Shows why the AI chose this priority
-           Transparency builds user trust — they can agree or override */}
-                                        </p>
-                                    )}
-                                </div>
-
-                                <button
-                                    onClick={handleAddTask}
-                                    className="bg-[#4C3D8F] hover:bg-[#3D3173] text-white font-medium text-sm py-2.5 rounded-xl shadow-[0_8px_20px_rgba(76,61,143,0.4)] transition-colors mt-1"
-                                >
-                                    Add task
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    <AddTaskForm
+                        newTask={newTask}
+                        onNewTaskChange={setNewTask}
+                        onAddTask={handleAddTask}
+                        prioritySuggesting={prioritySuggesting}
+                        priorityReason={priorityReason}
+                        onSuggestPriority={handleSuggestPriority}
+                        onPriorityManualSelect={(p) => {
+                            setNewTask({ ...newTask, priority: p });
+                            setPriorityReason("");
+                        }}
+                    />
                 )}
 
                 {/* Filter Buttons — point 7 — purple active state */}
@@ -739,172 +549,28 @@ export default function DashboardPage() {
                 </div>
 
                 {/* Task List */}
-                {tasksLoading ? (
-                    <div className="flex flex-col gap-3">
-                        {[1, 2, 3].map((i) => (
-                            <TaskSkeleton key={i} />
-                        ))}
-                    </div>
-                ) : (
-                    <div className="bg-white/55 backdrop-blur-md border border-white/70 rounded-2xl px-4">
-                        {tasks.length === 0 && (
-                            <p className="text-center text-[#94A3B8] py-10">No tasks found</p>
-                        )}
-                        {tasks.map((task, index) => (
-                            <div
-                                key={task.id}
-                                className={`flex items-center gap-3.5 py-4 ${index !== tasks.length - 1 ? "border-b border-[#E2E8F0]/70" : ""
-                                    }`}
-                            >
-                                <button
-                                    onClick={() => handleStatusChange(task.id, task.status === "Done" ? "Todo" : "Done")}
-                                    className={`w-5 h-5 rounded-full border-[1.5px] flex-shrink-0 flex items-center justify-center transition-colors ${task.status === "Done" ? "bg-[#4C3D8F] border-[#4C3D8F]" : "border-[#CBD5E1] bg-white"
-                                        }`}
-                                >
-                                    {task.status === "Done" && (
-                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="M20 6L9 17l-5-5" /></svg>
-                                    )}
-                                </button>
-
-                                <div className="flex-1">
-                                    <p className={`text-sm font-medium ${task.status === "Done" ? "text-[#94A3B8] line-through" : "text-[#1E293B]"}`}>
-                                        {task.title}
-                                    </p>
-                                    <div className="flex items-center gap-2 mt-0.5">
-                                        <span className={`w-1.5 h-1.5 rounded-full ${task.priority === "High" ? "bg-rose-500" :
-                                            task.priority === "Medium" ? "bg-amber-500" : "bg-emerald-500"
-                                            }`}></span>
-                                        {task.description && (
-                                            <span className="text-xs text-[#94A3B8]">{task.description}</span>
-                                        )}
-                                    </div>
-
-                                    {/* ⭐ NEW — AI improvement suggestion UI */}
-                                    {improvingTaskId === task.id && (
-                                        // 👆 Only shows for the SPECIFIC task being improved
-                                        // improvingTaskId tracks which task's improvement is in progress
-                                        <div className="mt-2 p-3 bg-[#F8F7FF] border border-[#E8E5FF] rounded-xl">
-                                            {improvedDescriptions[task.id] ? (
-                                                // 👆 If we have an improved description for this task, show it
-                                                <>
-                                                    <p className="text-xs font-medium text-[#4C3D8F] mb-1">
-                                                        ✨ AI Suggestion
-                                                    </p>
-                                                    <p className="text-xs text-[#1E293B] mb-2 leading-relaxed">
-                                                        {improvedDescriptions[task.id]}
-                                                    </p>
-                                                    <div className="flex gap-2">
-                                                        <button
-                                                            onClick={() => handleAcceptImprovement(task.id, improvedDescriptions[task.id]!)}
-                                                            className="text-xs bg-[#4C3D8F] text-white px-3 py-1.5 rounded-lg hover:bg-[#3D3173] transition-colors"
-                                                        >
-                                                            ✓ Accept
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleDismissImprovement(task.id)}
-                                                            className="text-xs bg-white border border-[#DCE7F5] text-[#475569] px-3 py-1.5 rounded-lg hover:bg-[#F8FAFC] transition-colors"
-                                                        >
-                                                            Dismiss
-                                                        </button>
-                                                    </div>
-                                                </>
-                                            ) : (
-                                                // 👆 Still loading the improvement
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-3 h-3 border-2 border-[#4C3D8F] border-t-transparent rounded-full animate-spin" />
-                                                    <p className="text-xs text-[#4C3D8F]">AI is improving your description...</p>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* ⭐ NEW — Custom status dropdown (point 1), replaces native <select> */}
-                                <div className="relative">
-                                    <button
-                                        onClick={() => setOpenStatusDropdown(openStatusDropdown === task.id ? null : task.id)}
-                                        className={`text-xs font-medium px-2.5 py-1.5 rounded-lg border flex items-center gap-1 transition-colors ${task.status === "Todo" ? "bg-white border-[#DCE7F5] text-[#64748B]" :
-                                            task.status === "InProgress" ? "bg-[#EEF2FF] border-[#C7D2FE] text-[#4338CA]" :
-                                                "bg-[#ECFDF5] border-[#A7F3D0] text-[#047857]"
-                                            }`}
-                                    >
-                                        {statusLabels[task.status]}
-                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
-                                    </button>
-
-                                    {openStatusDropdown === task.id && (
-                                        <>
-                                            <div
-                                                className="fixed inset-0 z-10"
-                                                onClick={() => setOpenStatusDropdown(null)}
-                                            />
-                                            <div className="absolute top-9 right-0 bg-white border border-[#E2E8F0] rounded-xl shadow-lg w-32 p-1 z-20">
-                                                {statusOptions.map((s) => (
-                                                    <button
-                                                        key={s}
-                                                        onClick={() => handleStatusChange(task.id, s)}
-                                                        className={`w-full text-left px-3 py-2 text-xs rounded-lg ${task.status === s ? "bg-[#EEF2FF] text-[#4338CA] font-medium" : "text-[#475569] hover:bg-[#F8FAFC]"
-                                                            }`}
-                                                    >
-                                                        {statusLabels[s]}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
-
-                                {/* ⭐ NEW — AI Improve button */}
-                                <button
-                                    onClick={() => handleImproveDescription(task)}
-                                    disabled={improvingTaskId === task.id}
-                                    // 👆 Disabled while THIS task is being improved
-                                    // Other tasks' buttons remain enabled
-                                    className="text-[#4C3D8F] hover:bg-[#F8F7FF] p-1.5 rounded-lg transition-colors disabled:opacity-50 text-xs font-medium"
-                                    aria-label={`Improve description for task: ${task.title}`}
-                                // 👆 Accessibility label — same pattern we added in Week 3
-                                >
-                                    ✨
-                                </button>
-
-                                <button
-                                    onClick={() => confirmDeleteTask(task)}
-                                    className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 p-1.5 rounded-lg transition-colors"
-                                    aria-label={`Delete task: ${task.title}`}
-                                >
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                )}
+                <TaskList
+                    tasks={tasks}
+                    tasksLoading={tasksLoading}
+                    totalTasks={totalTasks}
+                    openStatusDropdown={openStatusDropdown}
+                    setOpenStatusDropdown={setOpenStatusDropdown}
+                    improvingTaskId={improvingTaskId}
+                    improvedDescriptions={improvedDescriptions}
+                    onStatusChange={handleStatusChange}
+                    onImproveDescription={handleImproveDescription}
+                    onAcceptImprovement={handleAcceptImprovement}
+                    onDismissImprovement={handleDismissImprovement}
+                    onConfirmDelete={confirmDeleteTask}
+                />
 
                 {/* Pagination Controls */}
-                {totalPages > 1 && (
-                    <div className="flex justify-center items-center gap-4 mt-6">
-                        <button
-                            onClick={() => fetchTasks(currentPage - 1)}
-                            disabled={currentPage === 1}
-                            className="px-4 py-2 bg-white/70 border border-[#DCE7F5] rounded-lg font-medium text-sm text-[#475569] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white transition-colors"
-                        >
-                            ← Previous
-                        </button>
-                        <span className="text-[#64748B] text-sm font-medium">
-                            Page {currentPage} of {totalPages}
-                        </span>
-                        <button
-                            onClick={() => fetchTasks(currentPage + 1)}
-                            disabled={currentPage === totalPages}
-                            className="px-4 py-2 bg-white/70 border border-[#DCE7F5] rounded-lg font-medium text-sm text-[#475569] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white transition-colors"
-                        >
-                            Next →
-                        </button>
-                    </div>
-                )}
-
-                <p className="text-center text-[#94A3B8] text-xs mt-3">
-                    {totalTasks} total task{totalTasks !== 1 ? "s" : ""}
-                </p>
+                <Pagination
+                    currentPage={currentPage}
+                    totalPages={totalPages}
+                    totalTasks={totalTasks}
+                    onPageChange={fetchTasks}
+                />
             </div>
 
             {/* ⭐ FIXED — Delete confirmation dialog with translucent backdrop,
@@ -945,14 +611,12 @@ export default function DashboardPage() {
                             <button
                                 onClick={() => setTaskPendingDelete(null)}
                                 className="flex-1 bg-white border border-[#E2E8F0] text-[#475569] font-medium text-xs py-2 rounded-lg hover:bg-[#F8FAFC] transition-colors"
-                            // 👆 CHANGED — text-[13px]→text-xs, py-2.5→py-2 (smaller button, point requested)
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleDeleteConfirmed}
                                 className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-medium text-xs py-2 rounded-lg transition-colors"
-                            // 👆 SAME size reduction applied here for consistency
                             >
                                 Delete
                             </button>
