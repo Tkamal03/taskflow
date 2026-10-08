@@ -420,7 +420,7 @@ export default function DashboardPage() {
             />
 
             <div className="max-w-[1040px] mx-auto p-7">
-                {/* progress ring + greeting */}
+                {/* progress ring + Welcome greeting */}
                 <div className="flex items-center gap-6 mb-7">
                     <div className="relative w-[84px] h-[84px] flex-shrink-0">
                         <svg width="84" height="84" viewBox="0 0 84 84" className="-rotate-90">

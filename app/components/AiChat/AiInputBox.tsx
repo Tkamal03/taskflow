@@ -26,7 +26,7 @@ export default function AiInputBox({
         <div className="flex items-center gap-2 bg-white border border-[#DCE7F5] rounded-xl px-3.5 focus-within:border-[#4C3D8F] focus-within:ring-1 focus-within:ring-[#4C3D8F] transition-colors">
 
             {/* ⭐ Clear icon — LEFT side, only shows when conversation has messages */}
-            {hasMessages && (
+            {/* {hasMessages && (
                 <button
                     onClick={onClear}
                     className="flex-shrink-0 text-[#94A3B8] hover:text-rose-400 transition-colors"
@@ -37,7 +37,7 @@ export default function AiInputBox({
                         <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
                     </svg>
                 </button>
-            )}
+            )} */}
 
             {/* Text input */}
             <input
