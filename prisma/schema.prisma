@@ -68,6 +68,14 @@ model Task {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  embedding   Unsupported("vector(1536)")?
+  // ⭐ NEW — stores the task's vector embedding
+  // Unsupported() tells Prisma this is a DB-native type
+  // it doesn't have built-in support for — vector is a 
+  // pgvector type, not a standard PostgreSQL type
+  // The ? makes it optional — existing tasks have no 
+  // embedding yet until we generate them
+
   tags        TaskTag[]
   // ⭐ NEW — this Task can have MULTIPLE TaskTag join records
   // Just like `tasks Task[]` on User — this is a Prisma relation helper,

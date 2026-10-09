@@ -6,6 +6,9 @@ import { Prisma as PrismaTypes } from "@prisma/client";
 import { auth } from "@/auth";
 // 👆 auth() — gets current session in Server-side code (API routes are server-side!)
 
+import { generateEmbedding, buildTaskText } from "@/lib/embeddings";
+
+
 // GET — fetch all tasks belonging to logged-in user
 export async function GET(request: Request) {
     try {
@@ -144,7 +147,6 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const session = await auth();
-
         if (!session?.user?.id) {
             return NextResponse.json(
                 { success: false, message: "Not authenticated" },
@@ -152,37 +154,47 @@ export async function POST(request: Request) {
             );
         }
 
-        const body = await request.json();
-        // 👆 Get task data sent from frontend
+        const { title, description, priority } = await request.json();
 
-        if (!body.title) {
-            // 👆 Title is the only required field — description/status/priority have defaults
-            return NextResponse.json(
-                { success: false, message: "Title is required" },
-                { status: 400 }
-            );
-        }
-
-        const newTask = await prisma.task.create({
+        // Step 1: Create the task first
+        const task = await prisma.task.create({
             data: {
-                title: body.title,
-                description: body.description || null,
-                // 👆 If no description sent, store null (it's optional in schema)
-                status: body.status || "Todo",
-                priority: body.priority || "Medium",
-                userId: session.user.id
-                // ⭐ CRITICAL — links this task to the logged-in user
-                // This is the foreign key from our schema!
-            }
+                title,
+                description,
+                priority,
+                status: "Todo",
+                userId: session.user.id,
+            },
         });
 
-        return NextResponse.json(
-            { success: true, data: newTask },
-            { status: 201 }
-            // 👆 201 — Created successfully
-        );
+        // Step 2: Generate embedding and save it
+        // ⭐ We do this AFTER creating the task
+        // Reason: if embedding fails, task is still saved
+        // User doesn't lose their task just because AI had an issue
+        try {
+            const text = buildTaskText(title, description);
+            // 👆 Combines title + description into one string
+
+            const embedding = await generateEmbedding(text);
+            // 👆 Calls OpenAI → returns 1536 numbers
+
+            await prisma.$executeRaw`
+        UPDATE "Task" 
+        SET embedding = ${`[${embedding.join(",")}]`}::vector
+        WHERE id = ${task.id}
+      `;
+            // ⭐ Raw SQL to save the vector
+            // Prisma doesn't natively support vector type
+            // so we use $executeRaw (same as Week 3!)
+            // ::vector casts the string to pgvector type
+        } catch (embeddingError) {
+            console.error("Embedding generation failed:", embeddingError);
+            // 👆 Log but don't fail the request
+            // Task was already saved — embedding is optional
+        }
+
+        return NextResponse.json({ success: true, data: task });
     } catch (error) {
-        console.error("POST /api/tasks error:", error);
         return NextResponse.json(
             { success: false, message: "Failed to create task" },
             { status: 500 }

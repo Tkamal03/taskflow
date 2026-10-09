@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { auth } from "@/auth";
 import { TaskUpdateInput } from "@/lib/types";
+import { generateEmbedding, buildTaskText } from "@/lib/embeddings";
 
 // GET — fetch one specific task
 export async function GET(
@@ -100,15 +101,41 @@ export async function PUT(
             where: { id },
             data: {
                 title: body.title ?? existingTask.title,
-                // 👆 ?? nullish coalescing — if body.title is undefined, keep old value
-                // Lets frontend send ONLY the fields that changed!
                 description: body.description ?? existingTask.description,
                 status: body.status ?? existingTask.status,
                 priority: body.priority ?? existingTask.priority,
             }
         });
 
+        // ⭐ Re-embed ONLY if title or description changed
+        // No need to re-embed if only status or priority changed
+        // because those don't affect the MEANING of the task
+        if (body.title !== undefined || body.description !== undefined) {
+            try {
+                const text = buildTaskText(
+                    updatedTask.title,
+                    updatedTask.description
+                );
+                // 👆 Use updatedTask (not body) — ensures we have
+                // the full current values after the update
+
+                const embedding = await generateEmbedding(text);
+
+                await prisma.$executeRaw`
+                    UPDATE "Task"
+                    SET embedding = ${`[${embedding.join(",")}]`}::vector
+                    WHERE id = ${id}
+                `;
+                // 👆 Same raw SQL pattern as POST route
+            } catch (embeddingError) {
+                console.error("Embedding update failed:", embeddingError);
+                // 👆 Don't fail the update if embedding fails
+                // Task was already updated successfully
+            }
+        }
+
         return NextResponse.json({ success: true, data: updatedTask });
+
     } catch (error) {
         console.error("PUT /api/tasks/[id] error:", error);
         return NextResponse.json(
