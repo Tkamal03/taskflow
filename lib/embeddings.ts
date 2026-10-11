@@ -23,13 +23,32 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     // response.data[0] — first (and only) result
     // .embedding — the actual vector array
 }
+export function buildTaskText(
+    title: string,
+    description?: string | null,
+    priority?: string | null,
+    status?: string | null
+): string {
+    // ⭐ Include priority and status in the embedding text
+    // This way "urgency" searches will correctly rank
+    // High priority tasks higher than Low priority ones
 
-export function buildTaskText(title: string, description?: string | null): string {
-    // ⭐ Helper — combines title + description into one string
-    // for embedding. We embed BOTH together for richer meaning.
-    return description
-        ? `${title}. ${description}`
-        : title;
-    // 👆 "Fix login bug. Users can't sign in on mobile"
-    // If no description, just use the title
+    const parts = [title];
+    // 👆 Always start with the title
+
+    if (priority) parts.push(`Priority: ${priority}`);
+    // 👆 "Priority: High" or "Priority: Low"
+    // Now the vector KNOWS this task's priority level
+    // High priority tasks will be closer to "urgent" searches
+
+    if (status) parts.push(`Status: ${status}`);
+    // 👆 "Status: Todo" or "Status: Done"
+    // Now "completed tasks" searches work correctly too
+
+    if (description) parts.push(description);
+    // 👆 Description last — adds more context
+
+    return parts.join(". ");
+    // 👆 Joins all parts with ". " separator
+    // Result: "Fix login bug. Priority: High. Status: Todo. Users can't sign in"
 }

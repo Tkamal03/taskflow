@@ -31,7 +31,7 @@ export function useAiChat(initialMessages: Message[] = []) {
         setLoading(true);
 
         try {
-            const res = await fetch("/api/ai", {
+            const res = await fetch("/api/ai/rag-chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

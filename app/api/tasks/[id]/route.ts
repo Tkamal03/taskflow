@@ -114,7 +114,9 @@ export async function PUT(
             try {
                 const text = buildTaskText(
                     updatedTask.title,
-                    updatedTask.description
+                    updatedTask.description,
+                    updatedTask.priority,
+                    updatedTask.status
                 );
                 // 👆 Use updatedTask (not body) — ensures we have
                 // the full current values after the update

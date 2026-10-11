@@ -17,19 +17,14 @@ interface AiPanelProps {
     onClear: () => void;
     onClose: () => void;
     onExpand: () => void;
+    suggestedChips?: string[];
+    // ⭐ Pre-loaded chips from dashboard
 }
 
 export default function AiPanel({
-    messages,
-    prompt,
-    loading,
-    scrollContainerRef,
-    onPromptChange,
-    onSend,
-    onSendChip,
-    onClear,
-    onClose,
-    onExpand,
+    messages, prompt, loading, scrollContainerRef,
+    onPromptChange, onSend, onSendChip, onClear, onClose, onExpand,
+    suggestedChips,
 }: AiPanelProps) {
     return (
         <div className="bg-white/70 backdrop-blur-md border border-[#E8E5FF] rounded-2xl mb-4 animate-[slideDown_0.25s_ease-out] overflow-hidden">
@@ -90,13 +85,20 @@ export default function AiPanel({
                 {messages.length === 0 && !loading && (
                     <div className="text-center py-4">
                         <p className="text-xs text-[#94A3B8]">Ask me anything about your tasks!</p>
-                        <AiSuggestionChips onSend={onSendChip} disabled={loading} />
+                        <AiSuggestionChips
+                            onSend={onSendChip}
+                            disabled={loading}
+                            initialChips={suggestedChips}
+                        // ⭐ Pass prefetched chips — no loading lag!
+                        />
                     </div>
                 )}
                 <AiMessageList
                     messages={messages}
                     loading={loading}
                     scrollContainerRef={scrollContainerRef}
+                    onSend={onSendChip}
+                // ⭐ Pass onSend — shows chips after each AI reply
                 />
             </div>
 

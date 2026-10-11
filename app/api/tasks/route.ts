@@ -172,7 +172,7 @@ export async function POST(request: Request) {
         // Reason: if embedding fails, task is still saved
         // User doesn't lose their task just because AI had an issue
         try {
-            const text = buildTaskText(title, description);
+            const text = buildTaskText(title, description, priority, "Todo");
             // 👆 Combines title + description into one string
 
             const embedding = await generateEmbedding(text);

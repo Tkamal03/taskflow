@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import AiSuggestionChips from "./AiSuggestionChips";
 
 export interface Message {
     role: "user" | "assistant";
@@ -16,12 +17,15 @@ interface AiMessageListProps {
     scrollContainerRef: React.RefObject<HTMLDivElement | null>;
     // 👆 Parent passes its scroll ref — component attaches it to the container
     // This way each parent controls its own scroll container
+    onSend?: (message: string) => void;
+    // ⭐ Optional — used to show chips after each AI reply
 }
 
 export default function AiMessageList({
     messages,
     loading,
     scrollContainerRef,
+    onSend,
 }: AiMessageListProps) {
 
     // Auto-scroll whenever messages or loading state changes
@@ -61,6 +65,25 @@ export default function AiMessageList({
                     </div>
                 </div>
             ))}
+
+            {/* ⭐ Show suggestion chips after last AI message */}
+            {messages.length > 0 &&
+                messages[messages.length - 1].role === "assistant" &&
+                !loading &&
+                onSend &&
+                messages.length <= 6 && (
+                    <div className="flex justify-start pl-1">
+                        <AiSuggestionChips
+                            onSend={onSend}
+                            disabled={loading}
+                            askedQuestions={messages
+                                .filter(m => m.role === "user")
+                                .map(m => m.content)}
+                        // ⭐ Pass all user messages as "already asked"
+                        // AI will generate DIFFERENT chips each time!
+                        />
+                    </div>
+                )}
 
             {/* Loading dots — three bounce animation */}
             {loading && (

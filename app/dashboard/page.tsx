@@ -93,6 +93,10 @@ export default function DashboardPage() {
     const [showAiPanel, setShowAiPanel] = useState(false);
     // 👆 Keep this one — controls panel visibility, not AI logic
 
+    const [suggestedChips, setSuggestedChips] = useState<string[]>([]);
+    // ⭐ Prefetched chips — loaded when dashboard loads
+    // Passed to AiPanel so chips appear instantly when panel opens
+
     const {
         messages: aiPanelMessages,
         prompt: aiPanelPrompt,
@@ -168,6 +172,25 @@ export default function DashboardPage() {
         }
     }, [aiPanelMessages, aiPanelLoading]);
     // 👆 Watches BOTH — covers every state change in the conversation
+
+    useEffect(() => {
+        // ⭐ Prefetch suggestion chips when dashboard loads
+        // So chips are READY before user even opens the AI panel
+        async function prefetchChips() {
+            try {
+                const res = await fetch("/api/ai/suggest-questions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ askedQuestions: [] }),
+                    // 👆 No questions asked yet on fresh dashboard load
+                });
+                const data = await res.json();
+                if (data.success) setSuggestedChips(data.suggestions);
+            } catch { }
+        }
+        prefetchChips();
+    }, []);
+    // 👆 Runs once when dashboard first loads
 
     async function handleAddTask() {
         if (!newTask.title.trim()) {
@@ -512,6 +535,8 @@ export default function DashboardPage() {
                             }
                             window.location.href = "/ai-chat";
                         }}
+                        suggestedChips={suggestedChips}
+                    // ⭐ Pass prefetched chips — panel opens instantly!
                     />
                 )}
 
