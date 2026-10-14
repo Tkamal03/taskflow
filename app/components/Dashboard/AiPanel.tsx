@@ -5,6 +5,8 @@ import AiInputBox from "@/app/components/AiChat/AiInputBox";
 import AiSuggestionChips from "@/app/components/AiChat/AiSuggestionChips";
 import { Message } from "@/app/components/AiChat/AiMessageList";
 import AiChatDownload from "@/app/components/AiChat/AiChatDownload";
+import { ChatMode } from "@/app/components/AiChat/useAiChat";
+// 👆 Import ChatMode type so toggle button knows which mode is active
 
 interface AiPanelProps {
     messages: Message[];
@@ -18,13 +20,16 @@ interface AiPanelProps {
     onClose: () => void;
     onExpand: () => void;
     suggestedChips?: string[];
-    // ⭐ Pre-loaded chips from dashboard
+    mode: ChatMode;
+    // 👆 Current mode — "rag" or "agent"
+    onModeChange: (mode: ChatMode) => void;
+    // 👆 Called when user clicks the toggle button
 }
 
 export default function AiPanel({
     messages, prompt, loading, scrollContainerRef,
     onPromptChange, onSend, onSendChip, onClear, onClose, onExpand,
-    suggestedChips,
+    suggestedChips, mode, onModeChange,
 }: AiPanelProps) {
     return (
         <div className="bg-white/70 backdrop-blur-md border border-[#E8E5FF] rounded-2xl mb-4 animate-[slideDown_0.25s_ease-out] overflow-hidden">
@@ -35,9 +40,36 @@ export default function AiPanel({
                     <img src="/ai-chat-icon.png" alt="AI" className="w-5 h-5 object-contain" />
                     <span className="text-sm font-semibold text-[#4C3D8F]">AI Task Assistant</span>
                 </div>
+
                 <div className="flex items-center gap-1.5">
-                    {/* ⭐ NEW — Download button */}
+
+                    {/* ⭐ Mode toggle — RAG vs Agent */}
+                    <div className="flex items-center bg-[#F3F0FF] rounded-lg p-0.5 gap-0.5">
+                        <button
+                            onClick={() => onModeChange("rag")}
+                            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${mode === "rag"
+                                    ? "bg-[#4C3D8F] text-white shadow-sm"
+                                    : "text-[#4C3D8F] hover:bg-[#E8E5FF]"
+                                }`}
+                            title="RAG mode — semantic search through your tasks"
+                        >
+                            RAG
+                        </button>
+                        <button
+                            onClick={() => onModeChange("agent")}
+                            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${mode === "agent"
+                                    ? "bg-[#4C3D8F] text-white shadow-sm"
+                                    : "text-[#4C3D8F] hover:bg-[#E8E5FF]"
+                                }`}
+                            title="Agent mode — create, update, delete tasks with AI"
+                        >
+                            Agent
+                        </button>
+                    </div>
+
+                    {/* Download button */}
                     <AiChatDownload messages={messages} />
+
                     {/* Clear icon */}
                     {messages.length > 0 && (
                         <button
@@ -84,12 +116,17 @@ export default function AiPanel({
             >
                 {messages.length === 0 && !loading && (
                     <div className="text-center py-4">
-                        <p className="text-xs text-[#94A3B8]">Ask me anything about your tasks!</p>
+                        <p className="text-xs text-[#94A3B8]">
+                            {mode === "agent"
+                                ? "Create, update or delete tasks — just type naturally!"
+                                : "Ask me anything about your tasks!"
+                            }
+                            {/* 👆 Hint text changes based on mode */}
+                        </p>
                         <AiSuggestionChips
                             onSend={onSendChip}
                             disabled={loading}
                             initialChips={suggestedChips}
-                        // ⭐ Pass prefetched chips — no loading lag!
                         />
                     </div>
                 )}
@@ -98,7 +135,6 @@ export default function AiPanel({
                     loading={loading}
                     scrollContainerRef={scrollContainerRef}
                     onSend={onSendChip}
-                // ⭐ Pass onSend — shows chips after each AI reply
                 />
             </div>
 

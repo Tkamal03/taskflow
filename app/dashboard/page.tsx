@@ -105,6 +105,8 @@ export default function DashboardPage() {
         scrollContainerRef: aiPanelScrollRef,
         sendMessage: sendAiMessage,
         clearMessages: clearAiMessages,
+        mode: aiPanelMode,
+        setMode: setAiPanelMode,
     } = useAiChat();
     // ⭐ All AI state + logic now comes from the shared hook
     // Clean, zero duplication with ai-chat page
@@ -536,6 +538,8 @@ export default function DashboardPage() {
                             window.location.href = "/ai-chat";
                         }}
                         suggestedChips={suggestedChips}
+                        mode={aiPanelMode}
+                        onModeChange={setAiPanelMode}
                     // ⭐ Pass prefetched chips — panel opens instantly!
                     />
                 )}

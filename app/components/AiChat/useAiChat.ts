@@ -4,16 +4,28 @@ import { useState, useRef } from "react";
 import { Message } from "./AiMessageList";
 // 👆 Import Message type from AiMessageList — single source of truth
 
-export function useAiChat(initialMessages: Message[] = []) {
+export type ChatMode = "rag" | "agent";
+// 👆 Two modes:
+// "rag"   → calls /api/ai/rag-chat   (semantic search, finds similar tasks)
+// "agent" → calls /api/ai/agent-chat (function calling, exact DB queries + CRUD)
+
+export function useAiChat(initialMessages: Message[] = [], initialMode: ChatMode = "rag") {
     // ⭐ Custom hook — ALL shared AI chat logic lives here
     // Both dashboard panel AND ai-chat page use this hook
-    // No more duplicate state and handler code!
 
     const [messages, setMessages] = useState<Message[]>(initialMessages);
     const [prompt, setPrompt] = useState("");
     const [loading, setLoading] = useState(false);
+    const [mode, setMode] = useState<ChatMode>(initialMode);
+    // 👆 Track which mode is active — rag or agent
     const scrollContainerRef = useRef<HTMLDivElement>(null);
-    // 👆 Scroll ref also centralised here — passed down to AiMessageList
+
+    // Decide which API endpoint to call based on current mode
+    const apiEndpoint = mode === "agent"
+        ? "/api/ai/agent-chat"
+        : "/api/ai/rag-chat";
+    // 👆 Agent mode = function calling (stats, CRUD)
+    // RAG mode = semantic search (find similar tasks)
 
     async function sendMessage(textToSend?: string) {
         const content = textToSend || prompt;
@@ -31,13 +43,14 @@ export function useAiChat(initialMessages: Message[] = []) {
         setLoading(true);
 
         try {
-            const res = await fetch("/api/ai/rag-chat", {
+            const res = await fetch(apiEndpoint, {
+                // 👆 Uses the dynamic endpoint — rag or agent based on mode
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     prompt: content,
                     history: messages,
-                    // 👆 Always sends full history — works for both pages
+                    // 👆 Always sends full history — works for both modes
                 }),
             });
 
@@ -82,5 +95,8 @@ export function useAiChat(initialMessages: Message[] = []) {
         scrollContainerRef,
         sendMessage,
         clearMessages,
+        mode,
+        setMode,
+        // 👆 Expose mode + setMode so AiPanel can render the toggle button
     };
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
 import OpenAI from "openai";
+import { generateEmbedding, buildTaskText } from "@/lib/embeddings";
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -222,7 +223,7 @@ async function getTasksByStatus(userId: string, status: "Todo" | "InProgress" | 
 
 
 async function createTask(userId: string, title: string, description?: string, priority: "High" | "Medium" | "Low" = "Medium", status: "Todo" | "InProgress" | "Done" = "Todo") {
-    // Creates a new task in the database
+    // Step 1: Create the task in DB first
     const newTask = await prisma.task.create({
         data: {
             title,
@@ -240,11 +241,31 @@ async function createTask(userId: string, title: string, description?: string, p
         }
     });
 
+    // Step 2: Generate embedding so RAG mode can find this task too
+    // ⭐ Failure here won't break task creation — task is already saved
+    try {
+        const text = buildTaskText(title, description ?? "", priority, status);
+        // 👆 Combines title + description into one searchable string
+
+        const embedding = await generateEmbedding(text);
+        // 👆 Calls OpenAI → returns 1536 numbers
+
+        await prisma.$executeRaw`
+            UPDATE "Task"
+            SET embedding = ${`[${embedding.join(",")}]`}::vector
+            WHERE id = ${newTask.id}
+        `;
+        // 👆 Raw SQL — saves the vector so RAG can find this task
+    } catch (embeddingError) {
+        console.error("Agent createTask embedding failed:", embeddingError);
+        // 👆 Log but don't fail — task is already saved safely
+    }
+
     return { success: true, task: newTask };
 }
 
 async function updateTask(userId: string, taskId: string, status?: "Todo" | "InProgress" | "Done", priority?: "High" | "Medium" | "Low", description?: string) {
-    // First check the task belongs to this user
+    // Step 1: Check the task belongs to this user
     const existingTask = await prisma.task.findFirst({
         where: { id: taskId, userId },
     });
@@ -253,7 +274,7 @@ async function updateTask(userId: string, taskId: string, status?: "Todo" | "InP
         return { success: false, error: "Task not found or access denied" };
     }
 
-    // Build update object — only update fields that were provided
+    // Step 2: Update the task fields
     const updatedTask = await prisma.task.update({
         where: { id: taskId },
         data: {
@@ -269,6 +290,31 @@ async function updateTask(userId: string, taskId: string, status?: "Todo" | "InP
             description: true,
         }
     });
+
+    // Step 3: Re-generate embedding with updated values
+    // ⭐ Only needed if searchable fields changed (description, priority, status)
+    // title can't be updated via this tool, but we use latest values for all fields
+    try {
+        const text = buildTaskText(
+            updatedTask.title,
+            updatedTask.description ?? "",
+            updatedTask.priority,
+            updatedTask.status
+        );
+        // 👆 Always use the LATEST values — not the old ones
+
+        const embedding = await generateEmbedding(text);
+
+        await prisma.$executeRaw`
+            UPDATE "Task"
+            SET embedding = ${`[${embedding.join(",")}]`}::vector
+            WHERE id = ${taskId}
+        `;
+        // 👆 Overwrites the old embedding with the new one
+    } catch (embeddingError) {
+        console.error("Agent updateTask embedding failed:", embeddingError);
+        // 👆 Log but don't fail — task update already saved
+    }
 
     return { success: true, task: updatedTask };
 }
