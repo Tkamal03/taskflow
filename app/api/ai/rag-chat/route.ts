@@ -148,10 +148,10 @@ Task Statistics:
     `;
         // 👆 Same as semantic search PLUS one new line:
         //
-        // AND 1 - (embedding <=> ...) > 0.3
+        // AND 1 - (embedding <=> ...) > 0.2
         // ────────────────────────────────────
         // This is a SIMILARITY THRESHOLD
-        // Only include tasks with similarity > 30%
+        // Only include tasks with similarity > 20%
         // Why? Because we don't want to send irrelevant tasks
         // to the AI as "context" — that would confuse it!
         //
@@ -190,7 +190,6 @@ Reference task titles directly in your response.
         const systemPrompt = `You are an AI assistant built into TaskFlow, a task management app.
 
 ${statsSummary}
-// 👆 ALWAYS include stats — answers count/aggregate questions correctly
 
 ${taskContext ? `\nRelevant tasks for this query:\n${taskContext}` : ""}
 
@@ -199,7 +198,8 @@ Guidelines:
 - Use the Relevant tasks for specific task details and advice
 - Reference specific task titles when giving recommendations
 - Keep responses under 200 words
-- Never make up tasks not shown above`;
+- Never make up tasks not shown above
+- Note: Only up to 5 most relevant tasks are shown here. For trend analysis or calculations across all tasks, rely on the Task Statistics above`;
         // 👆 The system prompt now has TWO parts:
         // 1. The retrieved task context (STEP 3)
         // 2. Instructions for how to use that context

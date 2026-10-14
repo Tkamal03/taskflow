@@ -8,7 +8,6 @@ const openai = new OpenAI({
 });
 
 export async function POST(request: Request) {
-    // 👆 GET request — no body needed, just fetch suggestions
     try {
         const session = await auth();
         const body = await request.json().catch(() => ({}));
