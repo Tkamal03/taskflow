@@ -44,6 +44,18 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
     {
         type: "function",
         function: {
+            name: "getAllTasks",
+            description: "Get ALL tasks with complete details — title, description, status, priority, createdAt, updatedAt. Use this for ANY analytical question: trends, patterns, which day, which priority, overdue tasks, productivity calculations, or any question that needs full task data to reason over.",
+            parameters: {
+                type: "object",
+                properties: {},
+                required: []
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
             name: "getTasksByStatus",
             description: "Get all tasks filtered by a specific status. Use this when user asks about Todo tasks, InProgress tasks, or Done/completed tasks specifically.",
             parameters: {
@@ -137,7 +149,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
                 required: ["taskId"]
             }
         }
-    }
+    },
 ];
 
 
@@ -183,14 +195,12 @@ async function getTaskStats(userId: string) {
     };
 }
 
-async function getRecentTasks(userId: string, limit: number = 5) {
-    // Fetches most recently created tasks
+async function getRecentTasks(userId: string, limit?: number) {
     const tasks = await prisma.task.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
-        // 👆 newest first
-        take: limit,
-        // 👆 only fetch as many as requested
+        ...(limit ? { take: limit } : {}),
+        // 👆 Only apply limit if explicitly passed — otherwise fetch ALL tasks
         select: {
             id: true,
             title: true,
@@ -202,6 +212,24 @@ async function getRecentTasks(userId: string, limit: number = 5) {
     });
 
     return { tasks };
+}
+
+async function getAllTasks(userId: string) {
+    const tasks = await prisma.task.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        select: {
+            id: true,
+            title: true,
+            description: true,
+            status: true,
+            priority: true,
+            createdAt: true,
+            updatedAt: true,
+        }
+    });
+
+    return { totalTasks: tasks.length, tasks };
 }
 
 async function getTasksByStatus(userId: string, status: "Todo" | "InProgress" | "Done") {
@@ -359,6 +387,16 @@ export async function POST(request: Request) {
 
         const userId = session.user.id;
 
+        // ⭐ Filter out assistant messages that have tool_calls from history
+        // OpenAI requires: if history has an assistant message with tool_calls,
+        // the VERY NEXT message must be a matching tool result message
+        // We only store the final text reply in history — not the tool call exchange
+        // Sending an incomplete tool_calls sequence causes OpenAI to return a 400 error
+        const safeHistory = history.filter((message: { role: string; content: string; tool_calls?: unknown }) =>
+            !(message.role === "assistant" && message.tool_calls)
+            // 👆 Keep everything EXCEPT assistant messages that contain tool_calls
+        );
+
         // ── ROUND 1: Send question + tools list to OpenAI ──────
         // OpenAI reads the tools and decides if it needs to call one
         const firstResponse = await openai.chat.completions.create({
@@ -372,7 +410,7 @@ Always use a tool to get accurate data before answering questions about tasks.
 When listing tasks, always include the task ID in your response.
 Keep responses clear and under 200 words.`
                 },
-                ...history,
+                ...safeHistory,
                 { role: "user", content: prompt }
             ],
             tools,
@@ -389,44 +427,55 @@ Keep responses clear and under 200 words.`
         // ── ROUND 2: Check if OpenAI wants to call a tool ──────
         if (firstMessage.tool_calls && firstMessage.tool_calls.length > 0) {
             // OpenAI has decided to call one or more tools
-            const toolCall = firstMessage.tool_calls[0];
-            // 👆 Get the first tool call (we handle one at a time)
+            // ⭐ Loop through ALL tool_calls — OpenAI sometimes requests multiple at once
+            // Example: "am I completing more tasks this week vs last week?" triggers
+            // BOTH getTasksByStatus AND getTaskStats in one shot
 
-            if (toolCall.type !== "function") {
-                return NextResponse.json(
-                    { success: false, message: "Unsupported tool type" },
-                    { status: 500 }
-                );
+            const toolResultMessages: OpenAI.Chat.ChatCompletionToolMessageParam[] = [];
+            // 👆 Collect ALL tool results — one per tool_call OpenAI requested
+
+            for (const toolCall of firstMessage.tool_calls as any[]) {
+                // 👆 Cast to any[] — avoids the union type narrowing issue entirely
+                if (toolCall.type !== "function") continue;
+
+                const toolName = toolCall.function.name;
+                const toolArgs = JSON.parse(toolCall.function.arguments || "{}");
+
+                console.log(`🤖 OpenAI wants to call: ${toolName}`, toolArgs);
+
+                let toolResult: object;
+
+                if (toolName === "getTaskStats") {
+                    toolResult = await getTaskStats(userId);
+                } else if (toolName === "getRecentTasks") {
+                    toolResult = await getRecentTasks(userId, toolArgs.limit);
+                } else if (toolName === "getAllTasks") {
+                    toolResult = await getAllTasks(userId);
+                    // 👆 No params needed — returns all tasks for OpenAI to reason over
+                }
+                else if (toolName === "getTasksByStatus") {
+                    toolResult = await getTasksByStatus(userId, toolArgs.status);
+                } else if (toolName === "createTask") {
+                    toolResult = await createTask(userId, toolArgs.title, toolArgs.description, toolArgs.priority, toolArgs.status);
+                } else if (toolName === "updateTask") {
+                    toolResult = await updateTask(userId, toolArgs.taskId, toolArgs.status, toolArgs.priority, toolArgs.description);
+                } else if (toolName === "deleteTask") {
+                    toolResult = await deleteTask(userId, toolArgs.taskId);
+                } else {
+                    toolResult = { error: "Unknown tool" };
+                }
+
+                // ── Collect this tool's result ──────────────────────
+                toolResultMessages.push({
+                    role: "tool",
+                    tool_call_id: toolCall.id,
+                    // 👆 MUST match the tool_call_id OpenAI sent — one per tool call
+                    content: JSON.stringify(toolResult),
+                });
             }
 
-            const toolName = toolCall.function.name;
-            const toolArgs = JSON.parse(toolCall.function.arguments || "{}");
-            // 👆 Parse the arguments OpenAI wants to pass to our function
-
-            console.log(`🤖 OpenAI wants to call: ${toolName}`, toolArgs);
-
-            // ── ROUND 2a: Run the actual function ───────────────
-            let toolResult: object;
-
-            if (toolName === "getTaskStats") {
-                toolResult = await getTaskStats(userId);
-            } else if (toolName === "getRecentTasks") {
-                toolResult = await getRecentTasks(userId, toolArgs.limit);
-            } else if (toolName === "getTasksByStatus") {
-                toolResult = await getTasksByStatus(userId, toolArgs.status);
-            } else if (toolName === "createTask") {
-                toolResult = await createTask(userId, toolArgs.title, toolArgs.description, toolArgs.priority, toolArgs.status);
-            } else if (toolName === "updateTask") {
-                toolResult = await updateTask(userId, toolArgs.taskId, toolArgs.status, toolArgs.priority, toolArgs.description);
-            } else if (toolName === "deleteTask") {
-                toolResult = await deleteTask(userId, toolArgs.taskId);
-            } else {
-                toolResult = { error: "Unknown tool" };
-            }
-            // 👆 We run the function ourselves — OpenAI just told us which one
-
-            // ── ROUND 3: Send tool result back to OpenAI ────────
-            // Now OpenAI uses the real data to form its final answer
+            // ── ROUND 3: Send ALL tool results back to OpenAI ───────
+            // Now OpenAI uses ALL the real data to form its final answer
             const secondResponse = await openai.chat.completions.create({
                 model: "gpt-4o-mini",
                 messages: [
@@ -438,28 +487,27 @@ Always use a tool to get accurate data before answering questions about tasks.
 When listing tasks, always include the task ID in your response.
 Keep responses clear and under 200 words.`
                     },
-                    ...history,
+                    ...safeHistory,
                     { role: "user", content: prompt },
                     firstMessage,
-                    // 👆 Include OpenAI's first reply (which had the tool_call)
-                    {
-                        role: "tool",
-                        tool_call_id: toolCall.id,
-                        content: JSON.stringify(toolResult),
-                        // 👆 Send the real DB data back as the tool result
-                    }
+                    // 👆 Include OpenAI's first reply (which had ALL the tool_calls)
+                    ...toolResultMessages,
+                    // 👆 Spread ALL tool results — one per tool_call_id
                 ],
                 tools,
             });
 
             const finalMessage = secondResponse.choices[0].message.content;
-            // 👆 This is the final answer — based on REAL data from your DB
+            // 👆 Final answer — based on REAL data from ALL tools called
 
             return NextResponse.json({
                 success: true,
                 message: finalMessage,
-                toolUsed: toolName,
-                // 👆 Useful for debugging — shows which tool was called
+                toolUsed: (firstMessage.tool_calls as any[])
+                    .filter(toolCall => toolCall.type === "function")
+                    .map(toolCall => toolCall.function.name)
+                    .join(", "),
+                // 👆 Show ALL tools used, comma separated
             });
 
         } else {
@@ -474,6 +522,9 @@ Keep responses clear and under 200 words.`
 
     } catch (error: any) {
         console.error("Agent chat error:", error);
+        console.error("Agent chat error FULL:", JSON.stringify(error, null, 2));
+        console.error("Agent chat error message:", error?.message);
+        console.error("Agent chat error status:", error?.status);
 
         if (error?.status === 429) {
             return NextResponse.json(
