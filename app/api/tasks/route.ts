@@ -2,14 +2,19 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 // 👆 Our single Prisma instance
 import { Prisma as PrismaTypes } from "@prisma/client";
-// 👆 RENAMED — using "as" to avoid confusion with our lowercase 
+// 👆 RENAMED — using "as" to avoid confusion with our lowercase prisma instance
 import { auth } from "@/auth";
 // 👆 auth() — gets current session in Server-side code (API routes are server-side!)
 
-import { generateEmbedding, buildTaskText } from "@/lib/embeddings";
+// ⭐ Import createTask from shared service layer
+// Reason: createTask also generates an embedding — we don't want to duplicate
+// that embedding logic between this route and the agent-chat route
+import { createTask } from "@/lib/taskService";
 
 
-// GET — fetch all tasks belonging to logged-in user
+// GET — fetch paginated tasks for the logged-in user
+// Note: GET stays inline (not in taskService) because it has route-specific logic:
+// pagination, search filter, status filter — none of which the agent needs
 export async function GET(request: Request) {
     try {
         const session = await auth();
@@ -47,22 +52,20 @@ export async function GET(request: Request) {
         // Page 3 → skip (3-1)*5 = 10  → tasks 11-15
 
 
-        // Searech from DB start here....
+        // Search from DB start here....
 
         const search = searchParams.get("search") || "";
-        // 👆 NEW — read the search term from the URL query params
+        // 👆 Read the search term from the URL query params
         // Defaults to empty string if no search term provided
 
 
         const statusFilter = searchParams.get("status") || "All";
-        // 👆 NEW — also move status filtering to the backend, same logic!
-        // (Day 6's status filter buttons had the SAME problem as search,
-        //  just less obvious — let's fix both together)
+        // 👆 Also move status filtering to the backend
+        // status filter buttons have the SAME problem as search — let's fix both together
 
         // ⭐ Build the WHERE clause dynamically based on what's provided
         const whereClause: PrismaTypes.TaskWhereInput = {
             // 👆 Using our renamed "PrismaTypes" instead of "Prisma"
-            // 👆 CHANGED from "any" to "Prisma.TaskWhereInput"
             // This is a type PRISMA ITSELF GENERATES based on your schema —
             // it knows EXACTLY what fields/filters are valid for the Task model
             userId: session.user.id
@@ -75,7 +78,6 @@ export async function GET(request: Request) {
                 // 👆 Prisma's "contains" — translates to SQL's LIKE '%search%'
                 mode: "insensitive"
                 // 👆 "insensitive" — makes the search case-insensitive at the DATABASE level
-                // (remember our .toLowerCase() trick from Day 6? Prisma has a built-in way!)
             };
         }
 
@@ -86,8 +88,8 @@ export async function GET(request: Request) {
 
         const totalTasks = await prisma.task.count({
             where: whereClause
-            // 👆 Now count() respects search+filter too, not just userId!
-            // This is THE key fix — totalPages will now be calculated 
+            // 👆 count() respects search+filter too, not just userId!
+            // This is THE key fix — totalPages will now be calculated
             // based on MATCHING tasks, not ALL tasks
         });
 
@@ -118,7 +120,6 @@ export async function GET(request: Request) {
         const totalPages = Math.ceil(totalTasks / limit);
         // 👆 Math.ceil — rounds UP
         // 23 total tasks ÷ 5 per page = 4.6 → rounds up to 5 pages
-        // (that last page would have only 3 tasks, but it still needs to exist)
 
         return NextResponse.json({
             success: true,
@@ -144,6 +145,9 @@ export async function GET(request: Request) {
 }
 
 // POST — create a new task for logged-in user
+// ⭐ REFACTORED: now delegates to taskService.createTask
+// Why? createTask also generates an embedding — keeping that logic in one place
+// means if we ever change the embedding model, we update one file, not two.
 export async function POST(request: Request) {
     try {
         const session = await auth();
@@ -155,45 +159,29 @@ export async function POST(request: Request) {
         }
 
         const { title, description, priority } = await request.json();
+        // 👆 Extract only the fields the client sends for task creation
+        // status defaults to "Todo" inside createTask — no need to send it here
 
-        // Step 1: Create the task first
-        const task = await prisma.task.create({
-            data: {
-                title,
-                description,
-                priority,
-                status: "Todo",
-                userId: session.user.id,
-            },
-        });
+        // Delegate to the shared service — handles DB write + embedding in one call
+        const result = await createTask(
+            session.user.id,
+            title,
+            description,
+            priority,
+            "Todo"
+            // 👆 New tasks always start as Todo from the UI
+            // The agent-chat route can pass other statuses — that's fine
+        );
 
-        // Step 2: Generate embedding and save it
-        // ⭐ We do this AFTER creating the task
-        // Reason: if embedding fails, task is still saved
-        // User doesn't lose their task just because AI had an issue
-        try {
-            const text = buildTaskText(title, description, priority, "Todo");
-            // 👆 Combines title + description into one string
-
-            const embedding = await generateEmbedding(text);
-            // 👆 Calls OpenAI → returns 1536 numbers
-
-            await prisma.$executeRaw`
-        UPDATE "Task" 
-        SET embedding = ${`[${embedding.join(",")}]`}::vector
-        WHERE id = ${task.id}
-      `;
-            // ⭐ Raw SQL to save the vector
-            // Prisma doesn't natively support vector type
-            // so we use $executeRaw (same as Week 3!)
-            // ::vector casts the string to pgvector type
-        } catch (embeddingError) {
-            console.error("Embedding generation failed:", embeddingError);
-            // 👆 Log but don't fail the request
-            // Task was already saved — embedding is optional
+        if (!result.success) {
+            return NextResponse.json(
+                { success: false, message: "Failed to create task" },
+                { status: 500 }
+            );
         }
 
-        return NextResponse.json({ success: true, data: task });
+        return NextResponse.json({ success: true, data: result.task });
+        // 👆 Return shape matches old response — no frontend changes needed
     } catch (error) {
         return NextResponse.json(
             { success: false, message: "Failed to create task" },

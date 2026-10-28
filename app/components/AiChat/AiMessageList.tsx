@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+// 👆 Renders markdown strings as real HTML elements
+// **bold** → <strong>, bullet points → <ul><li>, etc.
+
 import AiSuggestionChips from "./AiSuggestionChips";
 
 export interface Message {
@@ -8,17 +12,12 @@ export interface Message {
     content: string;
 }
 // ⭐ Message type defined ONCE here — imported everywhere it's needed
-// No more duplicate interface definitions in dashboard and ai-chat
 
 interface AiMessageListProps {
     messages: Message[];
     loading: boolean;
-    // 👆 Both passed from parent — this component only DISPLAYS
     scrollContainerRef: React.RefObject<HTMLDivElement | null>;
-    // 👆 Parent passes its scroll ref — component attaches it to the container
-    // This way each parent controls its own scroll container
     onSend?: (message: string) => void;
-    // ⭐ Optional — used to show chips after each AI reply
 }
 
 export default function AiMessageList({
@@ -37,15 +36,9 @@ export default function AiMessageList({
             });
         }
     }, [messages, loading]);
-    // 👆 useEffect still uses the ref — but ref is now on PARENT div, not here
-    // 👆 Defined ONCE here — no more duplicate useEffect in both pages
 
     return (
-        <div
-            className="flex flex-col gap-3"
-        // 👆 Remove overflow-y-auto here — parent controls scroll container
-        // The parent div (dashboard panel OR ai-chat page) owns the scroll
-        >
+        <div className="flex flex-col gap-3">
             {/* Conversation messages */}
             {messages.map((msg, index) => (
                 <div
@@ -61,7 +54,25 @@ export default function AiMessageList({
                         {msg.role === "assistant" && (
                             <p className="text-[10px] font-medium text-[#4C3D8F] mb-1">AI Assistant</p>
                         )}
-                        <p className="whitespace-pre-wrap text-[13px]">{msg.content}</p>
+
+                        {msg.role === "user" ? (
+                            // User messages: plain text — no markdown needed
+                            <p className="whitespace-pre-wrap text-[13px]">{msg.content}</p>
+                        ) : (
+                            // AI messages: render markdown
+                            // [&_p] = targets <p> elements inside this div
+                            // [&_ul] = targets <ul>, [&_li] = targets <li>, etc.
+                            // This is Tailwind v4's way to style child elements without a config file
+                            <div className="text-[13px] leading-relaxed
+                                [&_p]:my-1
+                                [&_ul]:my-1 [&_ul]:pl-4 [&_ul]:list-disc
+                                [&_ol]:my-1 [&_ol]:pl-4 [&_ol]:list-decimal
+                                [&_li]:my-0.5
+                                [&_strong]:font-semibold [&_strong]:text-[#1E293B]
+                                [&_code]:bg-[#E8E5FF] [&_code]:px-1 [&_code]:rounded [&_code]:text-[12px]">
+                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                            </div>
+                        )}
                     </div>
                 </div>
             ))}
@@ -79,8 +90,6 @@ export default function AiMessageList({
                             askedQuestions={messages
                                 .filter(m => m.role === "user")
                                 .map(m => m.content)}
-                        // ⭐ Pass all user messages as "already asked"
-                        // AI will generate DIFFERENT chips each time!
                         />
                     </div>
                 )}

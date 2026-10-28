@@ -1,27 +1,239 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import prisma from "@/lib/prisma";
 import OpenAI from "openai";
-import { generateEmbedding, buildTaskText } from "@/lib/embeddings";
+
+// ⭐ Import all DB task functions from the shared service layer
+import {
+    getTaskStats,
+    getRecentTasks,
+    getAllTasks,
+    getTasksByStatus,
+    createTask,
+    updateTask,
+    deleteTask,
+} from "@/lib/taskService";
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-// ── Tool definitions — we tell OpenAI what functions exist ──
-// OpenAI reads these descriptions and decides which one to call
+// ── Remote MCP Server URL ─────────────────────────────────────────────
+const REMOTE_MCP_URL = process.env.REMOTE_MCP_URL || "http://localhost:3001/mcp";
+
+
+// ─────────────────────────────────────────────────────────────────────
+// HELPER: parseMcpResponse
+// ─────────────────────────────────────────────────────────────────────
+// The MCP Streamable HTTP transport can respond in TWO formats:
+//
+//   1. Plain JSON  → Content-Type: application/json
+//      Body:  { "jsonrpc": "2.0", "id": 1, "result": { ... } }
+//
+//   2. SSE stream  → Content-Type: text/event-stream
+//      Body:  "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{...}}\n\n"
+//
+// This helper reads the raw text and parses whichever format the server chose.
+// ─────────────────────────────────────────────────────────────────────
+async function parseMcpResponse(response: Response): Promise<{
+    jsonrpc: string;
+    id: number;
+    result?: { content: Array<{ type: string; text: string }> };
+    error?: { code: number; message: string };
+}> {
+    const contentType = response.headers.get("content-type") ?? "";
+    const rawText = await response.text();
+    // 👆 Always read as raw text first — we'll parse based on content type
+
+    if (contentType.includes("text/event-stream")) {
+        // ── SSE format: extract the JSON from the "data:" line ───────
+        // SSE looks like:
+        //   event: message
+        //   data: {"jsonrpc":"2.0","id":1,"result":{...}}
+        //
+        // We scan each line for one that starts with "data:" and parse it
+        const sseLines = rawText.split("\n");
+        for (const sseLine of sseLines) {
+            if (sseLine.startsWith("data:")) {
+                const jsonPayload = sseLine.slice("data:".length).trim();
+                // 👆 Remove the "data:" prefix and any surrounding whitespace
+                if (jsonPayload) {
+                    return JSON.parse(jsonPayload);
+                    // 👆 Parse and return the actual JSON-RPC object
+                }
+            }
+        }
+        throw new Error(`MCP SSE response had no data line. Raw: ${rawText.slice(0, 200)}`);
+
+    } else {
+        // ── Plain JSON format: parse directly ────────────────────────
+        return JSON.parse(rawText);
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// HELPER: callRemoteMcpTool
+// ─────────────────────────────────────────────────────────────────────
+// Sends initialize → tools/call to the remote MCP server.
+// Handles both JSON and SSE responses via parseMcpResponse.
+// ─────────────────────────────────────────────────────────────────────
+async function callRemoteMcpTool(
+    toolName: string,
+    toolArguments: Record<string, unknown> = {}
+): Promise<string> {
+
+    // ── STEP 1: Initialize the MCP session ───────────────────────────
+    const initResponse = await fetch(REMOTE_MCP_URL, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 0,
+            method: "initialize",
+            params: {
+                protocolVersion: "2025-03-26",
+                clientInfo: { name: "taskflow-agent", version: "1.0.0" },
+                capabilities: {},
+            },
+        }),
+    });
+
+    if (!initResponse.ok) {
+        const initErrorBody = await initResponse.text().catch(() => "(no body)");
+        throw new Error(`MCP initialize failed HTTP ${initResponse.status}: ${initErrorBody}`);
+    }
+
+    const sessionId = initResponse.headers.get("Mcp-Session-Id");
+    // 👆 null in stateless mode — included if server is stateful
+
+    // ── STEP 2: Call the actual tool ─────────────────────────────────
+    const toolCallHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    };
+    if (sessionId) {
+        toolCallHeaders["Mcp-Session-Id"] = sessionId;
+    }
+
+    const toolResponse = await fetch(REMOTE_MCP_URL, {
+        method: "POST",
+        headers: toolCallHeaders,
+        body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name: toolName, arguments: toolArguments },
+        }),
+    });
+
+    if (!toolResponse.ok) {
+        const toolErrorBody = await toolResponse.text().catch(() => "(no body)");
+        throw new Error(`Remote MCP server HTTP ${toolResponse.status} for "${toolName}": ${toolErrorBody}`);
+    }
+
+    const toolJsonResponse = await parseMcpResponse(toolResponse);
+
+    if (toolJsonResponse.error) {
+        throw new Error(`MCP tool "${toolName}" error (code ${toolJsonResponse.error.code}): ${toolJsonResponse.error.message}`);
+    }
+
+    return toolJsonResponse.result?.content?.[0]?.text ?? "";
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// HELPER: executeTool
+// ─────────────────────────────────────────────────────────────────────
+// Centralized tool executor — called in every round of the agentic loop.
+// Takes a tool name + args, runs it (DB or Remote MCP), returns the result.
+//
+// WHY EXTRACTED?
+// We used to duplicate this logic in ROUND 2 and ROUND 3.
+// Now we call executeTool() in both rounds — no duplication.
+// ─────────────────────────────────────────────────────────────────────
+async function executeTool(
+    toolName: string,
+    toolArgs: Record<string, unknown>,
+    userId: string
+): Promise<object> {
+
+    if (toolName === "getTaskStats") {
+        return await getTaskStats(userId);
+
+    } else if (toolName === "getRecentTasks") {
+        return await getRecentTasks(userId, toolArgs.limit as number);
+
+    } else if (toolName === "getAllTasks") {
+        return await getAllTasks(userId);
+
+    } else if (toolName === "getTasksByStatus") {
+        return await getTasksByStatus(userId, toolArgs.status as any);
+
+    } else if (toolName === "createTask") {
+        return await createTask(
+            userId,
+            toolArgs.title as string,
+            toolArgs.description as string,
+            toolArgs.priority as any,
+            toolArgs.status as any
+        );
+
+    } else if (toolName === "updateTask") {
+        return await updateTask(
+            userId,
+            toolArgs.taskId as string,
+            toolArgs.status as any,
+            toolArgs.priority as any,
+            toolArgs.description as string
+        );
+    } else if (toolName === "deleteTask") {
+        return await deleteTask(userId, toolArgs.taskId as string);
+
+    } else if (toolName === "get_location") {
+        // ⭐ Remote MCP tool
+        console.log("📍 Calling remote MCP: get_location");
+        try {
+            const locationText = await callRemoteMcpTool("get_location", {});
+            return { location: JSON.parse(locationText) };
+        } catch (mcpError) {
+            console.error("get_location MCP error:", mcpError);
+            return { error: "Could not get location. MCP server may be offline." };
+        }
+
+    } else if (toolName === "get_weather") {
+        // ⭐ Remote MCP tool
+        console.log("🌤️ Calling remote MCP: get_weather", toolArgs);
+        try {
+            const weatherText = await callRemoteMcpTool("get_weather", {
+                latitude: toolArgs.latitude,
+                longitude: toolArgs.longitude,
+                city: toolArgs.city,
+            });
+            return { weather: JSON.parse(weatherText) };
+        } catch (mcpError) {
+            console.error("get_weather MCP error:", mcpError);
+            return { error: "Could not get weather. MCP server may be offline." };
+        }
+
+    } else {
+        return { error: `Unknown tool: ${toolName}` };
+    }
+}
+
+
+// ── Tool definitions — all 9 tools OpenAI knows about ────────────────
 const tools: OpenAI.Chat.ChatCompletionTool[] = [
+
+    // ── Task tools (DB via taskService) ──────────────────────────────
     {
         type: "function",
         function: {
             name: "getTaskStats",
             description: "Get total task counts grouped by status (Todo, InProgress, Done) and priority (High, Medium, Low). Use this for questions about counts, completion rate, progress overview, or how many tasks exist.",
-            parameters: {
-                type: "object",
-                properties: {},
-                // 👆 No parameters needed — userId comes from the session
-                required: []
-            }
+            parameters: { type: "object", properties: {}, required: [] }
         }
     },
     {
@@ -32,10 +244,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
             parameters: {
                 type: "object",
                 properties: {
-                    limit: {
-                        type: "number",
-                        description: "How many recent tasks to fetch. Default is 5."
-                    }
+                    limit: { type: "number", description: "How many recent tasks to fetch. Default is 5." }
                 },
                 required: []
             }
@@ -46,11 +255,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
         function: {
             name: "getAllTasks",
             description: "Get ALL tasks with complete details — title, description, status, priority, createdAt, updatedAt. Use this for ANY analytical question: trends, patterns, which day, which priority, overdue tasks, productivity calculations, or any question that needs full task data to reason over.",
-            parameters: {
-                type: "object",
-                properties: {},
-                required: []
-            }
+            parameters: { type: "object", properties: {}, required: [] }
         }
     },
     {
@@ -61,11 +266,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
             parameters: {
                 type: "object",
                 properties: {
-                    status: {
-                        type: "string",
-                        enum: ["Todo", "InProgress", "Done"],
-                        description: "The status to filter by"
-                    }
+                    status: { type: "string", enum: ["Todo", "InProgress", "Done"], description: "The status to filter by" }
                 },
                 required: ["status"]
             }
@@ -79,24 +280,10 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
             parameters: {
                 type: "object",
                 properties: {
-                    title: {
-                        type: "string",
-                        description: "The title of the task"
-                    },
-                    description: {
-                        type: "string",
-                        description: "Optional description for the task"
-                    },
-                    priority: {
-                        type: "string",
-                        enum: ["High", "Medium", "Low"],
-                        description: "Priority level. Default is Medium."
-                    },
-                    status: {
-                        type: "string",
-                        enum: ["Todo", "InProgress", "Done"],
-                        description: "Initial status. Default is Todo."
-                    }
+                    title: { type: "string", description: "The title of the task" },
+                    description: { type: "string", description: "Optional description for the task" },
+                    priority: { type: "string", enum: ["High", "Medium", "Low"], description: "Priority level. Default is Medium." },
+                    status: { type: "string", enum: ["Todo", "InProgress", "Done"], description: "Initial status. Default is Todo." }
                 },
                 required: ["title"]
             }
@@ -110,24 +297,10 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
             parameters: {
                 type: "object",
                 properties: {
-                    taskId: {
-                        type: "string",
-                        description: "The ID of the task to update"
-                    },
-                    status: {
-                        type: "string",
-                        enum: ["Todo", "InProgress", "Done"],
-                        description: "New status for the task"
-                    },
-                    priority: {
-                        type: "string",
-                        enum: ["High", "Medium", "Low"],
-                        description: "New priority for the task"
-                    },
-                    description: {
-                        type: "string",
-                        description: "New description for the task"
-                    }
+                    taskId: { type: "string", description: "The ID of the task to update" },
+                    status: { type: "string", enum: ["Todo", "InProgress", "Done"], description: "New status for the task" },
+                    priority: { type: "string", enum: ["High", "Medium", "Low"], description: "New priority for the task" },
+                    description: { type: "string", description: "New description for the task" }
                 },
                 required: ["taskId"]
             }
@@ -141,228 +314,49 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
             parameters: {
                 type: "object",
                 properties: {
-                    taskId: {
-                        type: "string",
-                        description: "The ID of the task to delete"
-                    }
+                    taskId: { type: "string", description: "The ID of the task to delete" }
                 },
                 required: ["taskId"]
             }
         }
     },
+
+    // ── Remote MCP tools (HTTP via callRemoteMcpTool) ─────────────────
+    {
+        type: "function",
+        function: {
+            name: "get_location",
+            description: "Get the user's current location — city, country, latitude, longitude, and timezone. Use this when the user asks where they are, or BEFORE calling get_weather when no specific location is mentioned.",
+            parameters: { type: "object", properties: {}, required: [] }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "get_weather",
+            description: "Get the current weather for a location using latitude and longitude. Returns temperature, wind speed, and weather condition. If the user does not specify a location, call get_location first to get coordinates, then call get_weather with those coordinates.",
+            parameters: {
+                type: "object",
+                properties: {
+                    latitude: { type: "number", description: "Latitude of the location (e.g. 13.0827 for Chennai)" },
+                    longitude: { type: "number", description: "Longitude of the location (e.g. 80.2707 for Chennai)" },
+                    city: { type: "string", description: "City name — optional, used only for display in the response" }
+                },
+                required: ["latitude", "longitude"]
+            }
+        }
+    },
 ];
 
+// ── System prompt — shared across all OpenAI calls ────────────────────
+const SYSTEM_PROMPT = `You are an AI assistant built into TaskFlow, a task management app.
+You have access to the user's real task data through tools.
+You also have location and weather tools connected via a remote MCP server.
+Always use a tool to get accurate data before answering questions about tasks or weather.
+When listing tasks, always include the task ID in your response.
+If the user asks about weather without specifying a location, FIRST call get_location to get their coordinates, THEN call get_weather with those coordinates.
+Keep responses clear and under 200 words.`;
 
-// ── These are the ACTUAL functions that hit your database ──
-// OpenAI tells us WHICH one to call — our code actually runs it
-
-async function getTaskStats(userId: string) {
-    // Fetches counts grouped by status + priority
-    const taskStats = await prisma.task.groupBy({
-        by: ["status", "priority"],
-        where: { userId },
-        _count: { id: true },
-    });
-
-    const totalTasks = await prisma.task.count({
-        where: { userId },
-    });
-
-    // Count done tasks for completion rate calculation
-    const doneTasks = taskStats
-        .filter(taskStat => taskStat.status === "Done")
-        .reduce((totalCount, taskStat) => totalCount + taskStat._count.id, 0);
-
-    const completionRate = totalTasks > 0
-        ? Math.round((doneTasks / totalTasks) * 100)
-        : 0;
-    // 👆 Completion rate = done tasks / total tasks × 100
-    // Example: 3 done out of 10 total = 30%
-
-    return {
-        totalTasks,
-        completionRate,
-        byStatus: {
-            todo: taskStats.filter(statusGroup => statusGroup.status === "Todo").reduce((totalCount, statusGroup) => totalCount + statusGroup._count.id, 0),
-            inProgress: taskStats.filter(statusGroup => statusGroup.status === "InProgress").reduce((totalCount, statusGroup) => totalCount + statusGroup._count.id, 0),
-            done: doneTasks,
-        },
-        byPriority: {
-            high: taskStats.filter(priorityGroup => priorityGroup.priority === "High").reduce((totalCount, priorityGroup) => totalCount + priorityGroup._count.id, 0),
-            medium: taskStats.filter(priorityGroup => priorityGroup.priority === "Medium").reduce((totalCount, priorityGroup) => totalCount + priorityGroup._count.id, 0),
-            low: taskStats.filter(priorityGroup => priorityGroup.priority === "Low").reduce((totalCount, priorityGroup) => totalCount + priorityGroup._count.id, 0),
-        }
-    };
-}
-
-async function getRecentTasks(userId: string, limit?: number) {
-    const tasks = await prisma.task.findMany({
-        where: { userId },
-        orderBy: { createdAt: "desc" },
-        ...(limit ? { take: limit } : {}),
-        // 👆 Only apply limit if explicitly passed — otherwise fetch ALL tasks
-        select: {
-            id: true,
-            title: true,
-            status: true,
-            priority: true,
-            description: true,
-            createdAt: true,
-        }
-    });
-
-    return { tasks };
-}
-
-async function getAllTasks(userId: string) {
-    const tasks = await prisma.task.findMany({
-        where: { userId },
-        orderBy: { createdAt: "desc" },
-        select: {
-            id: true,
-            title: true,
-            description: true,
-            status: true,
-            priority: true,
-            createdAt: true,
-            updatedAt: true,
-        }
-    });
-
-    return { totalTasks: tasks.length, tasks };
-}
-
-async function getTasksByStatus(userId: string, status: "Todo" | "InProgress" | "Done") {
-    // Fetches all tasks with a specific status
-    const tasks = await prisma.task.findMany({
-        where: { userId, status },
-        orderBy: { createdAt: "desc" },
-        select: {
-            id: true,
-            title: true,
-            priority: true,
-            description: true,
-            createdAt: true,
-        }
-    });
-
-    return { status, count: tasks.length, tasks };
-}
-
-
-async function createTask(userId: string, title: string, description?: string, priority: "High" | "Medium" | "Low" = "Medium", status: "Todo" | "InProgress" | "Done" = "Todo") {
-    // Step 1: Create the task in DB first
-    const newTask = await prisma.task.create({
-        data: {
-            title,
-            description: description ?? "",
-            priority,
-            status,
-            userId,
-        },
-        select: {
-            id: true,
-            title: true,
-            priority: true,
-            status: true,
-            createdAt: true,
-        }
-    });
-
-    // Step 2: Generate embedding so RAG mode can find this task too
-    // ⭐ Failure here won't break task creation — task is already saved
-    try {
-        const text = buildTaskText(title, description ?? "", priority, status);
-        // 👆 Combines title + description into one searchable string
-
-        const embedding = await generateEmbedding(text);
-        // 👆 Calls OpenAI → returns 1536 numbers
-
-        await prisma.$executeRaw`
-            UPDATE "Task"
-            SET embedding = ${`[${embedding.join(",")}]`}::vector
-            WHERE id = ${newTask.id}
-        `;
-        // 👆 Raw SQL — saves the vector so RAG can find this task
-    } catch (embeddingError) {
-        console.error("Agent createTask embedding failed:", embeddingError);
-        // 👆 Log but don't fail — task is already saved safely
-    }
-
-    return { success: true, task: newTask };
-}
-
-async function updateTask(userId: string, taskId: string, status?: "Todo" | "InProgress" | "Done", priority?: "High" | "Medium" | "Low", description?: string) {
-    // Step 1: Check the task belongs to this user
-    const existingTask = await prisma.task.findFirst({
-        where: { id: taskId, userId },
-    });
-
-    if (!existingTask) {
-        return { success: false, error: "Task not found or access denied" };
-    }
-
-    // Step 2: Update the task fields
-    const updatedTask = await prisma.task.update({
-        where: { id: taskId },
-        data: {
-            ...(status !== undefined && { status }),
-            ...(priority !== undefined && { priority }),
-            ...(description !== undefined && { description }),
-        },
-        select: {
-            id: true,
-            title: true,
-            priority: true,
-            status: true,
-            description: true,
-        }
-    });
-
-    // Step 3: Re-generate embedding with updated values
-    // ⭐ Only needed if searchable fields changed (description, priority, status)
-    // title can't be updated via this tool, but we use latest values for all fields
-    try {
-        const text = buildTaskText(
-            updatedTask.title,
-            updatedTask.description ?? "",
-            updatedTask.priority,
-            updatedTask.status
-        );
-        // 👆 Always use the LATEST values — not the old ones
-
-        const embedding = await generateEmbedding(text);
-
-        await prisma.$executeRaw`
-            UPDATE "Task"
-            SET embedding = ${`[${embedding.join(",")}]`}::vector
-            WHERE id = ${taskId}
-        `;
-        // 👆 Overwrites the old embedding with the new one
-    } catch (embeddingError) {
-        console.error("Agent updateTask embedding failed:", embeddingError);
-        // 👆 Log but don't fail — task update already saved
-    }
-
-    return { success: true, task: updatedTask };
-}
-
-async function deleteTask(userId: string, taskId: string) {
-    // First check the task belongs to this user
-    const existingTask = await prisma.task.findFirst({
-        where: { id: taskId, userId },
-    });
-
-    if (!existingTask) {
-        return { success: false, error: "Task not found or access denied" };
-    }
-
-    await prisma.task.delete({
-        where: { id: taskId },
-    });
-
-    return { success: true, message: `Task "${existingTask.title}" has been deleted.` };
-}
 
 export async function POST(request: Request) {
     try {
@@ -375,8 +369,6 @@ export async function POST(request: Request) {
         }
 
         const { prompt, history = [] } = await request.json();
-        // 👆 prompt = what user just typed
-        // history = previous messages in conversation
 
         if (!prompt?.trim()) {
             return NextResponse.json(
@@ -387,144 +379,107 @@ export async function POST(request: Request) {
 
         const userId = session.user.id;
 
-        // ⭐ Filter out assistant messages that have tool_calls from history
-        // OpenAI requires: if history has an assistant message with tool_calls,
-        // the VERY NEXT message must be a matching tool result message
-        // We only store the final text reply in history — not the tool call exchange
-        // Sending an incomplete tool_calls sequence causes OpenAI to return a 400 error
-        const safeHistory = history.filter((message: { role: string; content: string; tool_calls?: unknown }) =>
-            !(message.role === "assistant" && message.tool_calls)
-            // 👆 Keep everything EXCEPT assistant messages that contain tool_calls
+        // Filter out history messages that cause OpenAI 400 errors:
+        // 1. Assistant messages with tool_calls (incomplete tool exchange)
+        // 2. Any message where content is null
+        const safeHistory = history.filter(
+            (message: { role: string; content: string | null; tool_calls?: unknown }) =>
+                !(message.role === "assistant" && message.tool_calls) &&
+                message.content !== null
         );
 
-        // ── ROUND 1: Send question + tools list to OpenAI ──────
-        // OpenAI reads the tools and decides if it needs to call one
-        const firstResponse = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-                {
-                    role: "system",
-                    content: `You are an AI assistant built into TaskFlow, a task management app.
-You have access to the user's real task data through tools.
-Always use a tool to get accurate data before answering questions about tasks.
-When listing tasks, always include the task ID in your response.
-Keep responses clear and under 200 words.`
-                },
-                ...safeHistory,
-                { role: "user", content: prompt }
-            ],
-            tools,
-            // 👆 We send the tools list — OpenAI decides which to call
-            tool_choice: "auto",
-            // 👆 "auto" = OpenAI decides whether to use a tool or not
-            // If the question needs data → it calls a tool
-            // If it's a general question → it answers directly
-        });
+        // ── AGENTIC LOOP ──────────────────────────────────────────────
+        // WHY A LOOP?
+        // Some tasks require chained tool calls. Example: "what's the weather?"
+        //   Turn 1: OpenAI calls get_location → we run it → return result
+        //   Turn 2: OpenAI calls get_weather  → we run it → return result
+        //   Turn 3: OpenAI has all data → writes final answer → no more tool calls
+        //
+        // Without a loop, we'd stop after Turn 1 and return message: null
+        // (OpenAI has no answer yet — it still needs to call get_weather).
+        //
+        // The loop runs until OpenAI stops asking for tools (max 5 rounds as safety cap).
+        // ─────────────────────────────────────────────────────────────
 
-        const firstMessage = firstResponse.choices[0].message;
-        // 👆 OpenAI's first reply — may contain a tool_calls array
+        // Build the message history we'll keep extending each loop turn
+        const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+            { role: "system", content: SYSTEM_PROMPT },
+            ...safeHistory,
+            { role: "user", content: prompt },
+        ];
 
-        // ── ROUND 2: Check if OpenAI wants to call a tool ──────
-        if (firstMessage.tool_calls && firstMessage.tool_calls.length > 0) {
-            // OpenAI has decided to call one or more tools
-            // ⭐ Loop through ALL tool_calls — OpenAI sometimes requests multiple at once
-            // Example: "am I completing more tasks this week vs last week?" triggers
-            // BOTH getTasksByStatus AND getTaskStats in one shot
+        const allToolsUsed: string[] = [];
+        // 👆 Collects every tool name called — for the toolUsed field in response
 
+        const MAX_ROUNDS = 5;
+        // 👆 Safety cap — prevents infinite loops if OpenAI keeps calling tools
+
+        for (let loopRound = 0; loopRound < MAX_ROUNDS; loopRound++) {
+
+            // Ask OpenAI what to do next (tool call or final answer)
+            const openAiResponse = await openai.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages,
+                tools,
+                tool_choice: "auto",
+            });
+
+            const assistantMessage = openAiResponse.choices[0].message;
+
+            // Always add the assistant's message to history
+            // This is required so the next OpenAI call has the full context
+            messages.push(assistantMessage);
+
+            if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+                // ── No more tool calls — OpenAI has a final answer ────
+                // Return it to the client
+                return NextResponse.json({
+                    success: true,
+                    message: assistantMessage.content,
+                    toolUsed: allToolsUsed.join(", ") || null,
+                });
+            }
+
+            // ── OpenAI wants to call tools — execute them all ─────────
             const toolResultMessages: OpenAI.Chat.ChatCompletionToolMessageParam[] = [];
-            // 👆 Collect ALL tool results — one per tool_call OpenAI requested
 
-            for (const toolCall of firstMessage.tool_calls as any[]) {
-                // 👆 Cast to any[] — avoids the union type narrowing issue entirely
+            for (const toolCall of assistantMessage.tool_calls) {
                 if (toolCall.type !== "function") continue;
 
                 const toolName = toolCall.function.name;
                 const toolArgs = JSON.parse(toolCall.function.arguments || "{}");
 
-                console.log(`🤖 OpenAI wants to call: ${toolName}`, toolArgs);
+                console.log(`🤖 [Round ${loopRound + 1}] OpenAI wants to call: ${toolName}`, toolArgs);
+                allToolsUsed.push(toolName);
 
-                let toolResult: object;
+                // Run the tool (DB or Remote MCP) via the shared executor
+                const toolResult = await executeTool(toolName, toolArgs, userId);
 
-                if (toolName === "getTaskStats") {
-                    toolResult = await getTaskStats(userId);
-                } else if (toolName === "getRecentTasks") {
-                    toolResult = await getRecentTasks(userId, toolArgs.limit);
-                } else if (toolName === "getAllTasks") {
-                    toolResult = await getAllTasks(userId);
-                    // 👆 No params needed — returns all tasks for OpenAI to reason over
-                }
-                else if (toolName === "getTasksByStatus") {
-                    toolResult = await getTasksByStatus(userId, toolArgs.status);
-                } else if (toolName === "createTask") {
-                    toolResult = await createTask(userId, toolArgs.title, toolArgs.description, toolArgs.priority, toolArgs.status);
-                } else if (toolName === "updateTask") {
-                    toolResult = await updateTask(userId, toolArgs.taskId, toolArgs.status, toolArgs.priority, toolArgs.description);
-                } else if (toolName === "deleteTask") {
-                    toolResult = await deleteTask(userId, toolArgs.taskId);
-                } else {
-                    toolResult = { error: "Unknown tool" };
-                }
-
-                // ── Collect this tool's result ──────────────────────
+                // Add this tool's result to the batch
                 toolResultMessages.push({
                     role: "tool",
                     tool_call_id: toolCall.id,
-                    // 👆 MUST match the tool_call_id OpenAI sent — one per tool call
                     content: JSON.stringify(toolResult),
+                    // 👆 JSON.stringify always produces a string — never null
                 });
             }
 
-            // ── ROUND 3: Send ALL tool results back to OpenAI ───────
-            // Now OpenAI uses ALL the real data to form its final answer
-            const secondResponse = await openai.chat.completions.create({
-                model: "gpt-4o-mini",
-                messages: [
-                    {
-                        role: "system",
-                        content: `You are an AI assistant built into TaskFlow, a task management app.
-You have access to the user's real task data through tools.
-Always use a tool to get accurate data before answering questions about tasks.
-When listing tasks, always include the task ID in your response.
-Keep responses clear and under 200 words.`
-                    },
-                    ...safeHistory,
-                    { role: "user", content: prompt },
-                    firstMessage,
-                    // 👆 Include OpenAI's first reply (which had ALL the tool_calls)
-                    ...toolResultMessages,
-                    // 👆 Spread ALL tool results — one per tool_call_id
-                ],
-                tools,
-            });
-
-            const finalMessage = secondResponse.choices[0].message.content;
-            // 👆 Final answer — based on REAL data from ALL tools called
-
-            return NextResponse.json({
-                success: true,
-                message: finalMessage,
-                toolUsed: (firstMessage.tool_calls as any[])
-                    .filter(toolCall => toolCall.type === "function")
-                    .map(toolCall => toolCall.function.name)
-                    .join(", "),
-                // 👆 Show ALL tools used, comma separated
-            });
-
-        } else {
-            // OpenAI answered directly without needing a tool
-            // (e.g. general questions like "what is a task?")
-            return NextResponse.json({
-                success: true,
-                message: firstMessage.content,
-                toolUsed: null,
-            });
+            // Add all tool results to messages — OpenAI sees them next round
+            messages.push(...toolResultMessages);
+            // 👆 Next loop iteration will call OpenAI again with these results
+            // OpenAI will either call more tools or write the final answer
         }
+
+        // ── Safety cap reached — return whatever we have ──────────────
+        // This should rarely/never happen in normal use
+        return NextResponse.json({
+            success: false,
+            message: "Agent loop exceeded maximum rounds. Please try again.",
+        });
 
     } catch (error: any) {
         console.error("Agent chat error:", error);
         console.error("Agent chat error FULL:", JSON.stringify(error, null, 2));
-        console.error("Agent chat error message:", error?.message);
-        console.error("Agent chat error status:", error?.status);
 
         if (error?.status === 429) {
             return NextResponse.json(
