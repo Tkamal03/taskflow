@@ -17,10 +17,6 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-// ── Remote MCP Server URL ─────────────────────────────────────────────
-const REMOTE_MCP_URL = process.env.REMOTE_MCP_URL || "http://localhost:3001/mcp";
-
-
 // ─────────────────────────────────────────────────────────────────────
 // HELPER: parseMcpResponse
 // ─────────────────────────────────────────────────────────────────────
@@ -82,7 +78,15 @@ async function callRemoteMcpTool(
     toolArguments: Record<string, unknown> = {}
 ): Promise<string> {
 
-    // ── STEP 1: Initialize the MCP session ───────────────────────────
+    // Read URL fresh on every call — picks up .env.local correctly
+    const REMOTE_MCP_URL = process.env.REMOTE_MCP_URL || "http://localhost:3001/mcp";
+    console.log("🔌 MCP URL:", REMOTE_MCP_URL);
+    // 👆 Add this so we can verify in terminal which URL is used
+
+    // ── STEP 1: Initialize the MCP session ──
+    // WHY 70s timeout? Render free tier spins down after inactivity.
+    // First request after spin-down can take 50+ seconds to wake up.
+    // We give 70s so the wake-up completes before we give up.
     const initResponse = await fetch(REMOTE_MCP_URL, {
         method: "POST",
         headers: {
@@ -99,6 +103,8 @@ async function callRemoteMcpTool(
                 capabilities: {},
             },
         }),
+        signal: AbortSignal.timeout(70000),
+        // 👆 70-second timeout — covers Render free tier 50s cold-start delay
     });
 
     if (!initResponse.ok) {
@@ -127,6 +133,8 @@ async function callRemoteMcpTool(
             method: "tools/call",
             params: { name: toolName, arguments: toolArguments },
         }),
+        signal: AbortSignal.timeout(70000),
+        // 👆 Same 70s timeout as initialize — tool call also waits for warm server
     });
 
     if (!toolResponse.ok) {

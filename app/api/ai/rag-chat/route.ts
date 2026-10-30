@@ -9,7 +9,7 @@ const openai = new OpenAI({
 });
 
 async function extractSearchKeywords(userPrompt: string): Promise<string> {
-    // ⭐ Dynamically extracts search keywords based on 
+    // ⭐ Dynamically extracts search keywords based on
     // what the user is ACTUALLY asking about
     // No hardcoded bias — adapts to each question
 
@@ -64,7 +64,6 @@ export async function POST(request: Request) {
         const { prompt, history = [] } = await request.json();
         // 👆 prompt = what the user just typed
         // history = previous messages in the conversation
-        // = [] means if no history sent, default to empty array
 
         if (!prompt?.trim()) {
             return NextResponse.json(
@@ -79,21 +78,11 @@ export async function POST(request: Request) {
             where: { userId: session.user.id },
             _count: { id: true },
         });
-        // 👆 groupBy — groups tasks by status AND priority
-        // Returns counts for each combination
-        // Example result:
-        // [
-        //   { status: "Todo", priority: "High", _count: { id: 2 } }
-        //   { status: "Done", priority: "Low",  _count: { id: 3 } }
-        // ]
 
         const totalTasks = await prisma.task.count({
             where: { userId: session.user.id },
         });
-        // 👆 Simple total count of ALL user's tasks
-        // This is what we use for "how many tasks?" questions
 
-        // Build a stats summary string
         const statsSummary = `
 Task Statistics:
 - Total tasks: ${totalTasks}
@@ -104,22 +93,11 @@ Task Statistics:
             return `${p}(${count})`;
         }).join(", ")}
 `.trim();
-        // 👆 Builds a readable summary like:
-        // "Total tasks: 10
-        //  By Status: Todo(5), InProgress(2), Done(3)
-        //  By Priority: High(3), Medium(5), Low(2)"
 
         // ── STEP 1: Build a focused retrieval query ─────────────
         const searchKeywords = await extractSearchKeywords(prompt);
-        // 👆 Dynamically extract what the user is actually asking about
-        // Different questions → different search keywords
         const queryEmbedding = await generateEmbedding(searchKeywords);
-        // 👆 We search using KEY CONCEPTS, not the full question
-        // But we answer using the full original prompt
         const queryVector = `[${queryEmbedding.join(",")}]`;
-        // 👆 Convert user's question to a vector
-        // Same as semantic search — we need this to find
-        // which tasks are RELEVANT to the question
 
         // ── STEP 2: Find relevant tasks from DB ────────────────
         const relevantTasks = await prisma.$queryRaw<
@@ -146,21 +124,6 @@ Task Statistics:
       ORDER BY embedding <=> ${queryVector}::vector
       LIMIT 5
     `;
-        // 👆 Same as semantic search PLUS one new line:
-        //
-        // AND 1 - (embedding <=> ...) > 0.2
-        // ────────────────────────────────────
-        // This is a SIMILARITY THRESHOLD
-        // Only include tasks with similarity > 20%
-        // Why? Because we don't want to send irrelevant tasks
-        // to the AI as "context" — that would confuse it!
-        //
-        // Example:
-        // User asks: "what are my bugs?"
-        // "Fix login bug" similarity = 0.89 ✅ included
-        // "Buy groceries" similarity = 0.12 ❌ excluded
-        // Without threshold, "Buy groceries" would be sent
-        // to AI as "relevant context" — which is wrong!
 
         // ── STEP 3: Build context from retrieved tasks ─────────
         let taskContext = "";
@@ -180,10 +143,6 @@ ${index + 1}. Title: ${task.title}
 Use these tasks to give specific, personalised advice.
 Reference task titles directly in your response.
       `.trim();
-            // 👆 We format the tasks as readable text for the AI
-            // The AI reads this as CONTEXT before answering
-            // Like giving someone a list of facts before asking
-            // them a question — they'll give a better answer!
         }
 
         // ── STEP 4: Call OpenAI with context + question ────────
@@ -200,33 +159,18 @@ Guidelines:
 - Keep responses under 200 words
 - Never make up tasks not shown above
 - Note: Only up to 5 most relevant tasks are shown here. For trend analysis or calculations across all tasks, rely on the Task Statistics above`;
-        // 👆 The system prompt now has TWO parts:
-        // 1. The retrieved task context (STEP 3)
-        // 2. Instructions for how to use that context
-        //
-        // This is the "Augmented" part of RAG:
-        // Retrieval → Augmented → Generation
-        // We AUGMENT the prompt with retrieved data!
 
         const response = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
                 { role: "system", content: systemPrompt },
-                // 👆 System prompt includes the retrieved task context
                 ...history,
-                // 👆 Previous conversation messages
                 { role: "user", content: prompt },
-                // 👆 Current user question
             ],
             max_tokens: 300,
             temperature: 0.5,
-            // 👆 Slightly lower temperature than general chat (0.7)
-            // We want factual answers about REAL tasks
-            // not creative interpretations!
         }, {
             timeout: 15000,
-            // 👆 Slightly longer timeout — RAG does more work
-            // (embedding + DB search + generation)
         });
 
         const message = response.choices[0].message.content;
@@ -238,13 +182,26 @@ Guidelines:
             );
         }
 
+        // ── STEP 5: Calculate highest similarity score ─────────
+        const highestSimilarity = relevantTasks.length > 0
+            ? Math.round(Math.max(...relevantTasks.map(t => t.similarity)) * 100)
+            : 0;
+        // 👆 Find the BEST match score from all returned tasks
+        // Math.max(...array) = picks the biggest number
+        // * 100 = convert 0.87 → 87 (show as percentage)
+
         return NextResponse.json({
             success: true,
             message,
-            // 👆 The AI's response — references YOUR actual tasks!
             relevantTasksFound: relevantTasks.length,
-            // 👆 How many tasks were used as context
-            // Useful for debugging during development
+
+            // ── RAG Info Badge data ─────────────────────────────
+            ragType: "Naive RAG",
+            // 👆 This route always uses Naive RAG
+            chunkType: "Document Specific Chunking",
+            // 👆 One task = one chunk (buildTaskText in lib/embeddings.ts)
+            highestSimilarity,
+            // 👆 Best similarity score as percentage (e.g. 87)
         });
 
     } catch (error: any) {

@@ -10,6 +10,16 @@ import AiSuggestionChips from "./AiSuggestionChips";
 export interface Message {
     role: "user" | "assistant";
     content: string;
+
+    // ── RAG Info Badge fields (only on assistant messages from rag-chat) ──
+    ragType?: string;
+    // 👆 e.g. "Naive RAG" — undefined for agent-chat messages
+    chunkType?: string;
+    // 👆 e.g. "Document Specific Chunking"
+    relevantTasksFound?: number;
+    // 👆 e.g. 3 — how many tasks matched the query
+    highestSimilarity?: number;
+    // 👆 e.g. 87 — best match score as percentage
 }
 // ⭐ Message type defined ONCE here — imported everywhere it's needed
 
@@ -59,19 +69,61 @@ export default function AiMessageList({
                             // User messages: plain text — no markdown needed
                             <p className="whitespace-pre-wrap text-[13px]">{msg.content}</p>
                         ) : (
-                            // AI messages: render markdown
-                            // [&_p] = targets <p> elements inside this div
-                            // [&_ul] = targets <ul>, [&_li] = targets <li>, etc.
-                            // This is Tailwind v4's way to style child elements without a config file
-                            <div className="text-[13px] leading-relaxed
-                                [&_p]:my-1
-                                [&_ul]:my-1 [&_ul]:pl-4 [&_ul]:list-disc
-                                [&_ol]:my-1 [&_ol]:pl-4 [&_ol]:list-decimal
-                                [&_li]:my-0.5
-                                [&_strong]:font-semibold [&_strong]:text-[#1E293B]
-                                [&_code]:bg-[#E8E5FF] [&_code]:px-1 [&_code]:rounded [&_code]:text-[12px]">
-                                <ReactMarkdown>{msg.content}</ReactMarkdown>
-                            </div>
+                            // AI messages: render markdown + RAG Info Badge
+                            <>
+                                {/* AI response text — rendered as markdown */}
+                                {/* [&_p] = targets <p> elements inside this div */}
+                                {/* [&_ul] = targets <ul>, [&_li] = targets <li>, etc. */}
+                                {/* This is Tailwind v4's way to style child elements without a config file */}
+                                <div className="text-[13px] leading-relaxed
+                                    [&_p]:my-1
+                                    [&_ul]:my-1 [&_ul]:pl-4 [&_ul]:list-disc
+                                    [&_ol]:my-1 [&_ol]:pl-4 [&_ol]:list-decimal
+                                    [&_li]:my-0.5
+                                    [&_strong]:font-semibold [&_strong]:text-[#1E293B]
+                                    [&_code]:bg-[#E8E5FF] [&_code]:px-1 [&_code]:rounded [&_code]:text-[12px]">
+                                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                </div>
+
+                                {/* ── RAG Info Badge ─────────────────────────────── */}
+                                {/* Only shows when ragType exists — i.e. rag-chat responses only */}
+                                {/* Agent-chat responses won't have ragType → badge hidden automatically */}
+                                {msg.ragType && (
+                                    <div className="mt-2.5 pt-2 border-t border-[#E8E5FF]">
+                                        {/* Badge label */}
+                                        <p className="text-[9px] font-semibold text-[#9B8EC4] uppercase tracking-wider mb-1.5">
+                                            RAG Info
+                                        </p>
+
+                                        {/* 4 badge pills in a row */}
+                                        <div className="flex flex-wrap gap-1.5">
+
+                                            {/* RAG Type pill */}
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#EDE9FF] text-[10px] font-medium text-[#4C3D8F]">
+                                                🔍 {msg.ragType}
+                                            </span>
+
+                                            {/* Chunk Type pill */}
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#EDE9FF] text-[10px] font-medium text-[#4C3D8F]">
+                                                📄 {msg.chunkType}
+                                            </span>
+
+                                            {/* Tasks Found pill */}
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#EDE9FF] text-[10px] font-medium text-[#4C3D8F]">
+                                                📋 {msg.relevantTasksFound ?? 0} Tasks Found
+                                            </span>
+
+                                            {/* Similarity pill — only show when at least 1 task was found */}
+                                            {/* If 0 tasks found, similarity is 0 — no point showing it */}
+                                            {(msg.relevantTasksFound ?? 0) > 0 && (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#EDE9FF] text-[10px] font-medium text-[#4C3D8F]">
+                                                    💯 {msg.highestSimilarity}% Match
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
                         )}
                     </div>
                 </div>

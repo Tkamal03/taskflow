@@ -63,6 +63,18 @@ export function useAiChat(initialMessages: Message[] = [], initialMode: ChatMode
                     content: data.success
                         ? data.message
                         : data.message || "Something went wrong. Please try again.",
+
+                    // ── RAG Info Badge fields ───────────────────
+                    // Only rag-chat route returns these fields
+                    // agent-chat route will return undefined — badge won't show
+                    ragType: data.ragType,
+                    // 👆 e.g. "Naive RAG"
+                    chunkType: data.chunkType,
+                    // 👆 e.g. "Document Specific Chunking"
+                    relevantTasksFound: data.relevantTasksFound,
+                    // 👆 e.g. 3 (how many tasks matched)
+                    highestSimilarity: data.highestSimilarity,
+                    // 👆 e.g. 87 (best match as percentage)
                 },
             ]);
         } catch {
