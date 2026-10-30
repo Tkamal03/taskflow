@@ -9,9 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^2.0.87",
+    "@ai-sdk/openai": "^4.0.105",
     "@prisma/client": "^5.22.0",
     "@tailwindcss/typography": "^0.5.20",
     "@types/bcryptjs": "^2.4.6",
+    "ai": "^7.0.157",
     "bcryptjs": "^3.0.3",
     "jspdf": "^4.2.1",
     "next": "16.2.9",
@@ -21,7 +24,8 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
